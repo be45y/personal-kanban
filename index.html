@@ -630,6 +630,21 @@
       white-space: nowrap;
     }
 
+    /* ── Import banner ── */
+    #import-banner {
+      display: none;
+      align-items: center;
+      gap: 12px;
+      background: linear-gradient(90deg, rgba(99,102,241,.18), rgba(99,102,241,.08));
+      border-bottom: 1px solid rgba(99,102,241,.35);
+      padding: 11px 24px;
+      font-size: .85rem;
+      flex-shrink: 0;
+    }
+    #import-banner.visible { display: flex; }
+    #import-banner strong { font-weight: 600; }
+    #import-banner .import-actions { display: flex; gap: 8px; margin-left: auto; }
+
     /* ── Loading spinner ── */
     .spinner {
       width: 36px; height: 36px;
@@ -719,6 +734,15 @@
   <button class="btn btn-primary" id="add-card-header-btn">+ Add Card</button>
   <button class="btn btn-ghost" id="logout-btn" title="Sign out">Sign Out</button>
 </header>
+
+<!-- Import banner -->
+<div id="import-banner">
+  <span>💾 <strong>Local data found.</strong> Import your existing cards, columns, and projects into your account?</span>
+  <div class="import-actions">
+    <button class="btn btn-primary" id="import-confirm-btn" style="padding:5px 14px">Import Now</button>
+    <button class="btn btn-ghost"   id="import-dismiss-btn" style="padding:5px 14px">Dismiss</button>
+  </div>
+</div>
 
 <!-- Board -->
 <div id="board-wrap">
@@ -876,15 +900,30 @@ function loadLocalState() {
   return defaultState();
 }
 
+// Returns { state, hadCloudData }
 async function loadStateFromDB() {
-  if (!currentUser) return loadLocalState();
+  if (!currentUser) return { state: loadLocalState(), hadCloudData: false };
   const { data, error } = await _sb
     .from('kanban_state')
     .select('state')
     .eq('user_id', currentUser.id)
     .maybeSingle();
-  if (error || !data) return loadLocalState();
-  return data.state || defaultState();
+  if (error || !data) return { state: loadLocalState(), hadCloudData: false };
+  return { state: data.state || defaultState(), hadCloudData: true };
+}
+
+async function importLocalDataToDB() {
+  const local = loadLocalState();
+  const hasContent = local.cards.length > 0 || local.projects.length > 0 ||
+    JSON.stringify(local.columns) !== JSON.stringify(DEFAULT_COLS.map(c => ({ ...c })));
+  if (!hasContent) return false;
+  state = local;
+  const { error } = await _sb
+    .from('kanban_state')
+    .upsert({ user_id: currentUser.id, state: local, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+  if (error) { setSyncStatus('error', 'Import failed'); console.error(error); return false; }
+  setSyncStatus('saved', 'Imported ✓');
+  return true;
 }
 
 function setSyncStatus(s, text) {
@@ -1581,6 +1620,27 @@ document.getElementById('logout-btn').addEventListener('click', async () => {
   await _sb.auth.signOut();
 });
 
+/* ─────────────────────────── Import local data ─────────────── */
+function showImportBanner() {
+  const local = loadLocalState();
+  const hasContent = local.cards.length > 0 || local.projects.length > 0 ||
+    JSON.stringify(local.columns) !== JSON.stringify(DEFAULT_COLS.map(c => ({ ...c })));
+  if (hasContent) document.getElementById('import-banner').classList.add('visible');
+}
+function hideImportBanner() {
+  document.getElementById('import-banner').classList.remove('visible');
+}
+
+document.getElementById('import-confirm-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('import-confirm-btn');
+  btn.disabled = true; btn.textContent = 'Importing…';
+  const ok = await importLocalDataToDB();
+  hideImportBanner();
+  if (ok) { renderBoard(); renderProjectFilter(); }
+  btn.disabled = false; btn.textContent = 'Import Now';
+});
+document.getElementById('import-dismiss-btn').addEventListener('click', hideImportBanner);
+
 /* ─────────────────────────── Init ─────────────────────────── */
 async function initApp() {
   // Validate config
@@ -1597,11 +1657,16 @@ async function initApp() {
   // Listen for auth changes (sign in, sign out, token refresh)
   _sb.auth.onAuthStateChange(async (event, session) => {
     if (session?.user) {
-      state = await loadStateFromDB();
+      currentUser = session.user;
+      const { state: loaded, hadCloudData } = await loadStateFromDB();
+      state = loaded;
       showApp(session.user);
       renderBoard();
       renderProjectFilter();
+      // On fresh sign-in only: offer to import local data if no cloud data exists
+      if (!hadCloudData && event === 'SIGNED_IN') showImportBanner();
     } else {
+      hideImportBanner();
       showAuth();
     }
   });
@@ -1609,7 +1674,9 @@ async function initApp() {
   // Check existing session
   const { data: { session } } = await _sb.auth.getSession();
   if (session?.user) {
-    state = await loadStateFromDB();
+    currentUser = session.user;
+    const { state: loaded } = await loadStateFromDB();
+    state = loaded;
     showApp(session.user);
     renderBoard();
     renderProjectFilter();

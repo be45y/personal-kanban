@@ -1,0 +1,1288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Kanban Board</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231a1d27'/%3E%3Crect x='3' y='5' width='8' height='22' rx='2.5' fill='%236366f1' opacity='.25'/%3E%3Crect x='4' y='7' width='6' height='4' rx='1.5' fill='%236366f1'/%3E%3Crect x='4' y='13' width='6' height='4' rx='1.5' fill='%236366f1' opacity='.6'/%3E%3Crect x='12' y='5' width='8' height='22' rx='2.5' fill='%23f59e0b' opacity='.25'/%3E%3Crect x='13' y='7' width='6' height='4' rx='1.5' fill='%23f59e0b'/%3E%3Crect x='13' y='13' width='6' height='4' rx='1.5' fill='%23f59e0b' opacity='.6'/%3E%3Crect x='13' y='19' width='6' height='4' rx='1.5' fill='%23f59e0b' opacity='.35'/%3E%3Crect x='21' y='5' width='8' height='22' rx='2.5' fill='%2310b981' opacity='.25'/%3E%3Crect x='22' y='7' width='6' height='4' rx='1.5' fill='%2310b981'/%3E%3C/svg%3E" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #22263a;
+      --border: #2e3250;
+      --text: #e2e4f0;
+      --text-muted: #7a7f9a;
+      --accent: #6366f1;
+      --accent-hover: #818cf8;
+      --danger: #ef4444;
+      --radius: 10px;
+      --col-width: 280px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ── */
+    header {
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    header h1 { font-size: 1.1rem; font-weight: 600; letter-spacing: -.3px; }
+    .header-spacer { flex: 1; }
+
+    #filter-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    #filter-bar label { font-size: .8rem; color: var(--text-muted); }
+    #project-filter, #sort-select {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 5px 10px;
+      font-size: .85rem;
+      cursor: pointer;
+    }
+
+    .btn {
+      border: none;
+      border-radius: 7px;
+      padding: 7px 14px;
+      font-size: .85rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: opacity .15s, background .15s;
+    }
+    .btn:hover { opacity: .85; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-ghost {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+    }
+    .btn-ghost:hover { border-color: var(--accent); color: var(--accent); opacity: 1; }
+
+    /* ── Board ── */
+    #board-wrap {
+      flex: 1;
+      overflow-x: auto;
+      padding: 20px 24px 32px;
+    }
+    #board {
+      display: flex;
+      gap: 16px;
+      align-items: flex-start;
+      min-height: calc(100vh - 120px);
+    }
+
+    /* ── Column ── */
+    .column {
+      width: var(--col-width);
+      flex-shrink: 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      display: flex;
+      flex-direction: column;
+      max-height: calc(100vh - 130px);
+    }
+    .column.drag-over { border-color: var(--accent); background: #1e2035; }
+
+    .col-header {
+      padding: 12px 14px 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .col-dot {
+      width: 9px; height: 9px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .col-title {
+      font-size: .8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .6px;
+      color: var(--text-muted);
+      flex: 1;
+      cursor: text;
+      outline: none;
+    }
+    .col-title:focus { color: var(--text); }
+    .col-count {
+      font-size: .75rem;
+      background: var(--surface2);
+      border-radius: 99px;
+      padding: 1px 8px;
+      color: var(--text-muted);
+    }
+    .col-menu-btn {
+      background: none; border: none; cursor: pointer;
+      color: var(--text-muted); font-size: 1.1rem; line-height: 1;
+      padding: 2px 4px; border-radius: 4px;
+    }
+    .col-menu-btn:hover { background: var(--surface2); color: var(--text); }
+
+    .cards-wrap {
+      padding: 10px 8px;
+      overflow-y: auto;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .add-card-btn {
+      width: 100%;
+      text-align: left;
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: .82rem;
+      padding: 8px 14px 12px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .add-card-btn:hover { color: var(--accent); }
+
+    /* ── Card ── */
+    .card {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 11px 12px;
+      cursor: grab;
+      user-select: none;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .card:hover { border-color: #4b5076; box-shadow: 0 2px 8px rgba(0,0,0,.3); }
+    .card.dragging { opacity: .4; cursor: grabbing; }
+    .card.drag-placeholder {
+      border: 2px dashed var(--accent);
+      background: rgba(99,102,241,.07);
+      height: 60px;
+      pointer-events: none;
+    }
+
+    .card-top { display: flex; align-items: flex-start; gap: 6px; margin-bottom: 7px; }
+    .card-title {
+      flex: 1;
+      font-size: .88rem;
+      font-weight: 500;
+      line-height: 1.35;
+      word-break: break-word;
+    }
+    .card-actions { display: flex; gap: 2px; opacity: 0; transition: opacity .15s; }
+    .card:hover .card-actions { opacity: 1; }
+    .card-action-btn {
+      background: none; border: none; cursor: pointer;
+      color: var(--text-muted); font-size: .85rem;
+      padding: 2px 5px; border-radius: 4px;
+    }
+    .card-action-btn:hover { background: var(--border); color: var(--text); }
+    .card-action-btn.del:hover { color: var(--danger); }
+
+    .card-desc {
+      font-size: .78rem;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+      line-height: 1.4;
+      word-break: break-word;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .card-footer { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .project-tag {
+      font-size: .7rem;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 99px;
+      letter-spacing: .3px;
+    }
+    .priority-badge {
+      font-size: .68rem;
+      padding: 1px 7px;
+      border-radius: 99px;
+      font-weight: 600;
+      letter-spacing: .4px;
+    }
+    .p-high   { background: rgba(239,68,68,.15);  color: #f87171; }
+    .p-medium { background: rgba(251,191,36,.12); color: #fbbf24; }
+    .p-low    { background: rgba(52,211,153,.12); color: #34d399; }
+
+    .card-date {
+      margin-left: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: .78rem;
+      font-weight: 600;
+      color: #a0a5c0;
+      background: rgba(255,255,255,.05);
+      border-radius: 6px;
+      padding: 2px 8px;
+    }
+    .card-date.overdue { color: #f87171; background: rgba(239,68,68,.12); }
+
+    /* ── Add Column Button ── */
+    .add-col-btn {
+      width: 220px;
+      flex-shrink: 0;
+      border: 2px dashed var(--border);
+      background: transparent;
+      color: var(--text-muted);
+      border-radius: var(--radius);
+      padding: 18px;
+      font-size: .85rem;
+      cursor: pointer;
+      transition: border-color .15s, color .15s;
+      align-self: flex-start;
+    }
+    .add-col-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* ── Modal ── */
+    .overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,.6);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 100;
+      backdrop-filter: blur(3px);
+    }
+    .overlay.hidden { display: none; }
+
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 28px 28px 24px;
+      width: min(720px, 92vw);
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+    .modal h2 { font-size: 1rem; font-weight: 600; margin-bottom: 20px; }
+
+    .form-group { margin-bottom: 15px; }
+    .form-group label { display: block; font-size: .78rem; color: var(--text-muted); margin-bottom: 6px; font-weight: 500; }
+    .form-group input,
+    .form-group textarea,
+    .form-group select {
+      width: 100%;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 7px;
+      padding: 9px 11px;
+      font-size: .87rem;
+      font-family: inherit;
+      outline: none;
+      transition: border-color .15s;
+    }
+    .form-group input:focus,
+    .form-group textarea:focus,
+    .form-group select:focus { border-color: var(--accent); }
+    .form-group textarea { resize: vertical; min-height: 70px; }
+
+    /* ── Rich text editor ── */
+    .rte-wrap {
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      overflow: hidden;
+      transition: border-color .15s;
+    }
+    .rte-wrap:focus-within { border-color: var(--accent); }
+    .rte-toolbar {
+      display: flex;
+      gap: 2px;
+      padding: 6px 8px;
+      background: #1e2135;
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+    .rte-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      border-radius: 5px;
+      width: 28px; height: 28px;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer;
+      font-size: .85rem;
+      font-family: inherit;
+      transition: background .1s, color .1s;
+      flex-shrink: 0;
+    }
+    .rte-btn:hover { background: var(--border); color: var(--text); }
+    .rte-btn.active { background: var(--accent); color: #fff; }
+    .rte-sep { width: 1px; background: var(--border); margin: 4px 4px; align-self: stretch; flex-shrink: 0; }
+    .rte-body {
+      min-height: 120px;
+      max-height: 260px;
+      overflow-y: auto;
+      padding: 10px 12px;
+      background: var(--surface2);
+      color: var(--text);
+      font-size: .87rem;
+      font-family: inherit;
+      line-height: 1.55;
+      outline: none;
+    }
+    .rte-body:empty::before {
+      content: attr(data-placeholder);
+      color: var(--text-muted);
+      pointer-events: none;
+    }
+    /* Rendered rich text in cards and modal */
+    .rte-body ul, .card-desc ul { padding-left: 1.3em; list-style: disc; }
+    .rte-body ol, .card-desc ol { padding-left: 1.3em; list-style: decimal; }
+    .rte-body li, .card-desc li { margin: 2px 0; }
+    .rte-body a, .card-desc a { color: var(--accent-hover); }
+    .card-desc { display: -webkit-box; -webkit-box-orient: vertical; }
+
+    .project-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-top: 4px;
+    }
+    .project-chip {
+      padding: 4px 12px;
+      border-radius: 99px;
+      font-size: .78rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: 2px solid transparent;
+      transition: border-color .15s, opacity .15s;
+      opacity: .7;
+    }
+    .project-chip.selected { border-color: #fff; opacity: 1; }
+    .project-chip:hover { opacity: 1; }
+
+    .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 22px; }
+
+    /* ── Confirm Dialog ── */
+    .confirm-modal { width: 320px; }
+    .confirm-modal p { font-size: .88rem; color: var(--text-muted); margin-bottom: 20px; }
+
+    /* ── Project color swatch ── */
+    .color-swatch {
+      width: 26px; height: 26px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,.15);
+      padding: 0;
+      cursor: pointer;
+      flex-shrink: 0;
+      appearance: none;
+      -webkit-appearance: none;
+      overflow: hidden;
+    }
+    .color-swatch::-webkit-color-swatch-wrapper { padding: 0; }
+    .color-swatch::-webkit-color-swatch { border: none; border-radius: 50%; }
+
+    /* ── View toggle ── */
+    .view-toggle {
+      display: flex;
+      gap: 2px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 3px;
+    }
+    .view-btn {
+      border: none;
+      background: none;
+      color: var(--text-muted);
+      border-radius: 5px;
+      padding: 5px 13px;
+      font-size: .82rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background .15s, color .15s;
+      white-space: nowrap;
+    }
+    .view-btn.active {
+      background: var(--surface);
+      color: var(--text);
+      box-shadow: 0 1px 4px rgba(0,0,0,.35);
+    }
+
+    /* ── Calendar ── */
+    #calendar-wrap {
+      flex: 1;
+      padding: 20px 24px 32px;
+      display: none;
+    }
+    #calendar-wrap.visible { display: flex; flex-direction: column; }
+
+    .cal-nav {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .cal-nav h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      min-width: 170px;
+      text-align: center;
+    }
+    .cal-today-btn {
+      margin-left: 4px;
+      font-size: .78rem;
+      padding: 5px 12px;
+    }
+
+    .cal-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      flex: 1;
+    }
+    .cal-dow {
+      background: var(--surface);
+      text-align: center;
+      font-size: .7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .6px;
+      color: var(--text-muted);
+      padding: 10px 0;
+    }
+    .cal-day {
+      background: var(--surface);
+      min-height: 120px;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      cursor: default;
+    }
+    .cal-day.other-month { background: #13151e; }
+    .cal-day.other-month .cal-day-num { opacity: .35; }
+    .cal-day.today { background: rgba(99,102,241,.07); }
+
+    .cal-day-num {
+      font-size: .75rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 3px;
+      line-height: 1;
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+    }
+    .cal-day-num span {
+      width: 22px; height: 22px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 50%;
+    }
+    .cal-day.today .cal-day-num span {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .cal-pill {
+      font-size: .72rem;
+      font-weight: 500;
+      padding: 2px 7px;
+      border-radius: 5px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      cursor: pointer;
+      line-height: 1.5;
+      transition: filter .1s;
+    }
+    .cal-pill:hover { filter: brightness(1.2); }
+    .cal-more {
+      font-size: .7rem;
+      color: var(--text-muted);
+      padding: 1px 5px;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    .cal-more:hover { color: var(--accent-hover); background: rgba(99,102,241,.1); }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+  </style>
+</head>
+<body>
+
+<!-- Header -->
+<header>
+  <h1>Kanban Board</h1>
+  <div class="view-toggle">
+    <button class="view-btn active" id="view-board-btn">⊞ Board</button>
+    <button class="view-btn" id="view-calendar-btn">◫ Calendar</button>
+  </div>
+  <div class="header-spacer"></div>
+  <div id="filter-bar">
+    <label for="project-filter">Project:</label>
+    <select id="project-filter">
+      <option value="">All Projects</option>
+    </select>
+    <label for="sort-select">Sort:</label>
+    <select id="sort-select">
+      <option value="">Default</option>
+      <option value="priority">Priority</option>
+      <option value="due">Due Date</option>
+    </select>
+  </div>
+  <button class="btn btn-ghost" id="manage-projects-btn">Manage Projects</button>
+  <button class="btn btn-primary" id="add-card-header-btn">+ Add Card</button>
+</header>
+
+<!-- Board -->
+<div id="board-wrap">
+  <div id="board"></div>
+</div>
+
+<!-- Calendar -->
+<div id="calendar-wrap">
+  <div class="cal-nav">
+    <button class="btn btn-ghost" id="cal-prev-btn">&#8592;</button>
+    <h2 id="cal-month-label"></h2>
+    <button class="btn btn-ghost" id="cal-next-btn">&#8594;</button>
+    <button class="btn btn-ghost cal-today-btn" id="cal-today-btn">Today</button>
+  </div>
+  <div class="cal-grid" id="cal-grid"></div>
+</div>
+
+<!-- Card Modal -->
+<div class="overlay hidden" id="card-overlay">
+  <div class="modal">
+    <h2 id="modal-title">New Card</h2>
+    <div class="form-group">
+      <label>Title *</label>
+      <input type="text" id="card-title-input" placeholder="What needs to be done?" />
+    </div>
+    <div class="form-group">
+      <label>Description</label>
+      <div class="rte-wrap">
+        <div class="rte-toolbar">
+          <button class="rte-btn" data-cmd="bold" title="Bold"><b>B</b></button>
+          <button class="rte-btn" data-cmd="italic" title="Italic"><i>I</i></button>
+          <button class="rte-btn" data-cmd="underline" title="Underline"><u>U</u></button>
+          <button class="rte-btn" data-cmd="strikeThrough" title="Strikethrough"><s>S</s></button>
+          <div class="rte-sep"></div>
+          <button class="rte-btn" data-cmd="insertUnorderedList" title="Bullet list">&#8226;&#8212;</button>
+          <button class="rte-btn" data-cmd="insertOrderedList" title="Numbered list">1&#8212;</button>
+          <div class="rte-sep"></div>
+          <button class="rte-btn" data-cmd="removeFormat" title="Clear formatting">&#8856;</button>
+        </div>
+        <div class="rte-body" id="card-desc-input" contenteditable="true" data-placeholder="Optional details..."></div>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Column</label>
+      <select id="card-col-select"></select>
+    </div>
+    <div class="form-group">
+      <label>Project</label>
+      <div class="project-list" id="project-chips"></div>
+    </div>
+    <div class="form-group">
+      <label>Priority</label>
+      <select id="card-priority-select">
+        <option value="">None</option>
+        <option value="high">High</option>
+        <option value="medium">Medium</option>
+        <option value="low">Low</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Due Date</label>
+      <input type="date" id="card-due-input" />
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="card-cancel-btn">Cancel</button>
+      <button class="btn btn-primary" id="card-save-btn">Save Card</button>
+    </div>
+  </div>
+</div>
+
+<!-- Projects Modal -->
+<div class="overlay hidden" id="projects-overlay">
+  <div class="modal" style="width:380px">
+    <h2>Manage Projects</h2>
+    <div class="form-group">
+      <label>New Project Name</label>
+      <div style="display:flex;gap:8px">
+        <input type="text" id="new-project-input" placeholder="Project name" style="flex:1" />
+        <button class="btn btn-primary" id="add-project-btn" style="flex-shrink:0">Add</button>
+      </div>
+    </div>
+    <div id="projects-list" style="display:flex;flex-direction:column;gap:8px;margin-top:8px;max-height:300px;overflow-y:auto"></div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="projects-done-btn">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- Confirm Modal -->
+<div class="overlay hidden" id="confirm-overlay">
+  <div class="modal confirm-modal">
+    <h2 id="confirm-title">Confirm</h2>
+    <p id="confirm-msg"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="confirm-cancel-btn">Cancel</button>
+      <button class="btn" id="confirm-ok-btn" style="background:var(--danger);color:#fff">Delete</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ─────────────────────────── State ─────────────────────────── */
+const DEFAULT_COLS = [
+  { id: 'backlog',     title: 'Backlog',      color: '#7a7f9a' },
+  { id: 'todo',        title: 'To Do',        color: '#6366f1' },
+  { id: 'inprogress',  title: 'In Progress',  color: '#f59e0b' },
+  { id: 'review',      title: 'Review',       color: '#8b5cf6' },
+  { id: 'done',        title: 'Done',         color: '#10b981' },
+];
+
+const PROJECT_COLORS = [
+  '#6366f1','#ec4899','#f59e0b','#10b981','#06b6d4',
+  '#f97316','#8b5cf6','#14b8a6','#e11d48','#84cc16',
+];
+
+function uid() { return Math.random().toString(36).slice(2, 10); }
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem('kanban_v2');
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return {
+    columns: DEFAULT_COLS.map(c => ({ ...c })),
+    cards: [],
+    projects: [],
+  };
+}
+
+function saveState() { localStorage.setItem('kanban_v2', JSON.stringify(state)); }
+
+let state = loadState();
+
+/* ─────────────────────────── Drag state ─────────────────────── */
+let dragging = null;
+let placeholder = null;
+
+/* ─────────────────────────── Render ─────────────────────────── */
+function getProjectColor(projectId) {
+  const p = state.projects.find(p => p.id === projectId);
+  return p ? p.color : '#7a7f9a';
+}
+function getProjectName(projectId) {
+  const p = state.projects.find(p => p.id === projectId);
+  return p ? p.name : null;
+}
+
+function formatDate(str) {
+  if (!str) return null;
+  const d = new Date(str + 'T00:00:00');
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+function isOverdue(str) {
+  if (!str) return false;
+  const today = new Date(); today.setHours(0,0,0,0);
+  return new Date(str + 'T00:00:00') < today;
+}
+
+const PRIORITY_ORDER = { high: 0, medium: 1, low: 2, '': 3 };
+
+function getFilteredCards(colId) {
+  const fp = document.getElementById('project-filter').value;
+  const sort = document.getElementById('sort-select').value;
+  let cards = state.cards.filter(c => c.col === colId && (!fp || c.project === fp));
+  if (sort === 'priority') {
+    cards = [...cards].sort((a, b) =>
+      (PRIORITY_ORDER[a.priority ?? ''] ?? 3) - (PRIORITY_ORDER[b.priority ?? ''] ?? 3)
+    );
+  } else if (sort === 'due') {
+    cards = [...cards].sort((a, b) => {
+      if (!a.due && !b.due) return 0;
+      if (!a.due) return 1;
+      if (!b.due) return -1;
+      return a.due.localeCompare(b.due);
+    });
+  }
+  return cards;
+}
+
+function renderBoard() {
+  const board = document.getElementById('board');
+  board.innerHTML = '';
+
+  state.columns.forEach(col => {
+    const cards = getFilteredCards(col.id);
+
+    const colEl = document.createElement('div');
+    colEl.className = 'column';
+    colEl.dataset.colId = col.id;
+
+    colEl.innerHTML = `
+      <div class="col-header">
+        <div class="col-dot" style="background:${col.color}"></div>
+        <div class="col-title" contenteditable="true" spellcheck="false">${escHtml(col.title)}</div>
+        <span class="col-count">${cards.length}</span>
+        <button class="col-menu-btn" title="Delete column" data-col-del="${col.id}">×</button>
+      </div>
+      <div class="cards-wrap" data-col-id="${col.id}"></div>
+      <button class="add-card-btn" data-add-col="${col.id}">+ Add card</button>
+    `;
+
+    const wrap = colEl.querySelector('.cards-wrap');
+    cards.forEach(card => wrap.appendChild(buildCard(card)));
+
+    // Col title edit
+    const titleEl = colEl.querySelector('.col-title');
+    titleEl.addEventListener('blur', () => {
+      col.title = titleEl.textContent.trim() || col.title;
+      saveState();
+    });
+    titleEl.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); titleEl.blur(); } });
+
+    // Col delete
+    colEl.querySelector(`[data-col-del="${col.id}"]`).addEventListener('click', () => {
+      confirmAction(`Delete column "${col.title}"?`, 'All cards in this column will also be deleted.', () => {
+        state.columns = state.columns.filter(c => c.id !== col.id);
+        state.cards = state.cards.filter(c => c.col !== col.id);
+        saveState();
+        renderBoard();
+        populateColSelect();
+      });
+    });
+
+    // Add card from column
+    colEl.querySelector(`[data-add-col="${col.id}"]`).addEventListener('click', () => openCardModal(null, col.id));
+
+    // Drop events
+    colEl.addEventListener('dragover', e => {
+      e.preventDefault();
+      colEl.classList.add('drag-over');
+      const afterEl = getDragAfterEl(wrap, e.clientY);
+      if (placeholder) {
+        if (afterEl) wrap.insertBefore(placeholder, afterEl);
+        else wrap.appendChild(placeholder);
+      }
+    });
+    colEl.addEventListener('dragleave', e => {
+      if (!colEl.contains(e.relatedTarget)) colEl.classList.remove('drag-over');
+    });
+    colEl.addEventListener('drop', e => {
+      e.preventDefault();
+      colEl.classList.remove('drag-over');
+      if (!dragging) return;
+      const card = state.cards.find(c => c.id === dragging);
+      if (!card) return;
+      card.col = col.id;
+      // Reorder
+      const visCards = Array.from(wrap.children)
+        .filter(el => !el.classList.contains('drag-placeholder') && el.dataset.cardId)
+        .map(el => el.dataset.cardId);
+      if (placeholder && placeholder.parentNode === wrap) {
+        const idx = Array.from(wrap.children).indexOf(placeholder);
+        visCards.splice(idx, 0, dragging);
+      }
+      // Apply new order in state for this column
+      const otherCards = state.cards.filter(c => c.id !== dragging && c.col !== col.id);
+      const colCards = state.cards.filter(c => c.col === col.id && c.id !== dragging);
+      const orderedIds = visCards.filter((v,i,a) => a.indexOf(v) === i);
+      const newColCards = orderedIds.map(id => state.cards.find(c => c.id === id)).filter(Boolean);
+      state.cards = [...otherCards, ...colCards.filter(c => !orderedIds.includes(c.id)), ...newColCards];
+      saveState();
+      renderBoard();
+    });
+
+    board.appendChild(colEl);
+  });
+
+  // Add column button
+  const addColBtn = document.createElement('button');
+  addColBtn.className = 'add-col-btn';
+  addColBtn.textContent = '+ Add Column';
+  addColBtn.addEventListener('click', addColumn);
+  board.appendChild(addColBtn);
+}
+
+function buildCard(card) {
+  const el = document.createElement('div');
+  el.className = 'card';
+  el.draggable = true;
+  el.dataset.cardId = card.id;
+
+  const projName = getProjectName(card.project);
+  const projColor = card.project ? getProjectColor(card.project) : null;
+  const dateStr = formatDate(card.due);
+  const overdue = isOverdue(card.due);
+
+  if (projColor) {
+    el.style.borderLeftColor = projColor;
+    el.style.borderLeftWidth = '3px';
+    el.style.background = `color-mix(in srgb, ${projColor} 8%, var(--surface2))`;
+  }
+
+  el.innerHTML = `
+    <div class="card-top">
+      <div class="card-title">${escHtml(card.title)}</div>
+      <div class="card-actions">
+        <button class="card-action-btn" title="Edit" data-edit="${card.id}">✎</button>
+        <button class="card-action-btn del" title="Delete" data-del="${card.id}">×</button>
+      </div>
+    </div>
+    ${card.desc ? `<div class="card-desc"></div>` : ''}
+    <div class="card-footer">
+      ${projName ? `<span class="project-tag" style="background:${projColor}22;color:${projColor}">${escHtml(projName)}</span>` : ''}
+      ${card.priority ? `<span class="priority-badge p-${card.priority}">${cap(card.priority)}</span>` : ''}
+      ${dateStr ? `<span class="card-date ${overdue ? 'overdue' : ''}">${overdue ? '⚠ ' : ''}${dateStr}</span>` : ''}
+    </div>
+  `;
+
+  el.addEventListener('click', () => openCardModal(card));
+  if (card.desc) el.querySelector('.card-desc').innerHTML = card.desc;
+
+  el.querySelector(`[data-edit="${card.id}"]`)?.addEventListener('click', e => { e.stopPropagation(); openCardModal(card); });
+  el.querySelector(`[data-del="${card.id}"]`)?.addEventListener('click', e => {
+    e.stopPropagation();
+    confirmAction('Delete card?', `"${card.title}" will be permanently removed.`, () => {
+      state.cards = state.cards.filter(c => c.id !== card.id);
+      saveState();
+      renderBoard();
+    });
+  });
+
+  // Drag
+  el.addEventListener('dragstart', e => {
+    dragging = card.id;
+    el.classList.add('dragging');
+    placeholder = document.createElement('div');
+    placeholder.className = 'card drag-placeholder';
+    e.dataTransfer.effectAllowed = 'move';
+  });
+  el.addEventListener('dragend', () => {
+    dragging = null;
+    el.classList.remove('dragging');
+    placeholder?.remove();
+    placeholder = null;
+    document.querySelectorAll('.column').forEach(c => c.classList.remove('drag-over'));
+  });
+
+  return el;
+}
+
+function getDragAfterEl(container, y) {
+  const draggables = [...container.querySelectorAll('.card:not(.dragging):not(.drag-placeholder)')];
+  return draggables.reduce((closest, el) => {
+    const box = el.getBoundingClientRect();
+    const offset = y - box.top - box.height / 2;
+    if (offset < 0 && offset > closest.offset) return { offset, el };
+    return closest;
+  }, { offset: -Infinity }).el;
+}
+
+/* ─────────────────────────── Project filter ─────────────────── */
+function renderProjectFilter() {
+  const sel = document.getElementById('project-filter');
+  const val = sel.value;
+  sel.innerHTML = '<option value="">All Projects</option>';
+  state.projects.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.id; opt.textContent = p.name;
+    sel.appendChild(opt);
+  });
+  sel.value = val || '';
+}
+
+/* ─────────────────────────── Card Modal ─────────────────────── */
+let editingCard = null;
+let defaultColId = null;
+
+function openCardModal(card, colId) {
+  editingCard = card || null;
+  defaultColId = colId || (state.columns[0]?.id) || null;
+
+  document.getElementById('modal-title').textContent = card ? 'Edit Card' : 'New Card';
+  document.getElementById('card-title-input').value = card?.title || '';
+  document.getElementById('card-desc-input').innerHTML = card?.desc || '';
+  document.getElementById('card-priority-select').value = card?.priority || '';
+  document.getElementById('card-due-input').value = card?.due || '';
+
+  populateColSelect(card?.col || defaultColId);
+  renderProjectChips(card?.project || null);
+
+  document.getElementById('card-overlay').classList.remove('hidden');
+  setTimeout(() => document.getElementById('card-title-input').focus(), 50);
+}
+
+function populateColSelect(selectedId) {
+  const sel = document.getElementById('card-col-select');
+  sel.innerHTML = '';
+  state.columns.forEach(col => {
+    const opt = document.createElement('option');
+    opt.value = col.id; opt.textContent = col.title;
+    if (col.id === selectedId) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+function renderProjectChips(selectedId) {
+  const wrap = document.getElementById('project-chips');
+  wrap.innerHTML = '';
+  if (state.projects.length === 0) {
+    wrap.innerHTML = '<span style="font-size:.78rem;color:var(--text-muted)">No projects yet — create one via Manage Projects</span>';
+    return;
+  }
+  state.projects.forEach(p => {
+    const chip = document.createElement('div');
+    chip.className = 'project-chip' + (p.id === selectedId ? ' selected' : '');
+    chip.textContent = p.name;
+    chip.style.background = p.color + '22';
+    chip.style.color = p.color;
+    chip.dataset.projectId = p.id;
+    chip.addEventListener('click', () => {
+      wrap.querySelectorAll('.project-chip').forEach(c => c.classList.remove('selected'));
+      chip.classList.toggle('selected', !chip.classList.contains('selected') || true);
+      // toggle off if already selected
+      const wasSelected = chip.dataset.wasSelected === '1';
+      wrap.querySelectorAll('.project-chip').forEach(c => { c.dataset.wasSelected = '0'; });
+      if (!wasSelected) { chip.classList.add('selected'); chip.dataset.wasSelected = '1'; }
+      else { chip.classList.remove('selected'); }
+    });
+    if (p.id === selectedId) chip.dataset.wasSelected = '1';
+    wrap.appendChild(chip);
+  });
+}
+
+document.getElementById('card-cancel-btn').addEventListener('click', () => {
+  document.getElementById('card-overlay').classList.add('hidden');
+});
+document.getElementById('card-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('card-overlay'))
+    document.getElementById('card-overlay').classList.add('hidden');
+});
+
+document.getElementById('card-save-btn').addEventListener('click', () => {
+  const title = document.getElementById('card-title-input').value.trim();
+  if (!title) { document.getElementById('card-title-input').style.borderColor = 'var(--danger)'; return; }
+  document.getElementById('card-title-input').style.borderColor = '';
+
+  const selectedChip = document.querySelector('#project-chips .project-chip.selected');
+  const project = selectedChip?.dataset.projectId || null;
+  const col = document.getElementById('card-col-select').value;
+  const priority = document.getElementById('card-priority-select').value;
+  const due = document.getElementById('card-due-input').value;
+  const desc = document.getElementById('card-desc-input').innerHTML.trim();
+
+  if (editingCard) {
+    Object.assign(editingCard, { title, desc, col, project, priority, due });
+  } else {
+    state.cards.push({ id: uid(), title, desc, col, project, priority, due });
+  }
+
+  saveState();
+  renderBoard();
+  if (currentView === 'calendar') renderCalendar();
+  renderProjectFilter();
+  document.getElementById('card-overlay').classList.add('hidden');
+});
+
+// Allow Enter to submit title
+document.getElementById('card-title-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('card-save-btn').click();
+});
+
+// Rich text toolbar
+document.querySelectorAll('.rte-btn[data-cmd]').forEach(btn => {
+  btn.addEventListener('mousedown', e => {
+    e.preventDefault(); // keep focus in editor
+    document.execCommand(btn.dataset.cmd, false, null);
+    updateRteToolbar();
+  });
+});
+
+function updateRteToolbar() {
+  document.querySelectorAll('.rte-btn[data-cmd]').forEach(btn => {
+    const cmd = btn.dataset.cmd;
+    if (['bold','italic','underline','strikeThrough','insertUnorderedList','insertOrderedList'].includes(cmd)) {
+      btn.classList.toggle('active', document.queryCommandState(cmd));
+    }
+  });
+}
+
+document.getElementById('card-desc-input').addEventListener('keyup', updateRteToolbar);
+document.getElementById('card-desc-input').addEventListener('mouseup', updateRteToolbar);
+document.getElementById('card-desc-input').addEventListener('focus', updateRteToolbar);
+
+/* ─────────────────────────── Projects Modal ─────────────────── */
+document.getElementById('manage-projects-btn').addEventListener('click', openProjectsModal);
+document.getElementById('projects-done-btn').addEventListener('click', () => {
+  document.getElementById('projects-overlay').classList.add('hidden');
+});
+document.getElementById('projects-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('projects-overlay'))
+    document.getElementById('projects-overlay').classList.add('hidden');
+});
+
+document.getElementById('add-project-btn').addEventListener('click', addProject);
+document.getElementById('new-project-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') addProject();
+});
+
+function addProject() {
+  const input = document.getElementById('new-project-input');
+  const name = input.value.trim();
+  if (!name) return;
+  const color = PROJECT_COLORS[state.projects.length % PROJECT_COLORS.length];
+  state.projects.push({ id: uid(), name, color });
+  saveState();
+  input.value = '';
+  renderProjectsList();
+  renderProjectFilter();
+}
+
+function openProjectsModal() {
+  renderProjectsList();
+  document.getElementById('projects-overlay').classList.remove('hidden');
+  setTimeout(() => document.getElementById('new-project-input').focus(), 50);
+}
+
+function renderProjectsList() {
+  const list = document.getElementById('projects-list');
+  list.innerHTML = '';
+  if (state.projects.length === 0) {
+    list.innerHTML = '<p style="font-size:.82rem;color:var(--text-muted)">No projects yet.</p>';
+    return;
+  }
+  state.projects.forEach(p => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--surface2);border-radius:8px;border:1px solid var(--border)';
+    row.innerHTML = `
+      <input type="color" class="color-swatch" value="${p.color}" title="Change project color" data-color-proj="${p.id}" />
+      <span style="flex:1;font-size:.85rem">${escHtml(p.name)}</span>
+      <button class="btn btn-ghost" style="padding:3px 10px;font-size:.75rem" data-del-proj="${p.id}">Delete</button>
+    `;
+    row.querySelector(`[data-color-proj="${p.id}"]`).addEventListener('input', e => {
+      p.color = e.target.value;
+      saveState();
+      renderProjectFilter();
+      renderBoard();
+    });
+    row.querySelector(`[data-del-proj="${p.id}"]`).addEventListener('click', () => {
+      confirmAction(`Delete project "${p.name}"?`, 'Cards tagged with this project will lose their tag.', () => {
+        state.cards.forEach(c => { if (c.project === p.id) c.project = null; });
+        state.projects = state.projects.filter(pr => pr.id !== p.id);
+        saveState();
+        renderProjectsList();
+        renderProjectFilter();
+        renderBoard();
+      });
+    });
+    list.appendChild(row);
+  });
+}
+
+/* ─────────────────────────── Add Column ─────────────────────── */
+function addColumn() {
+  const colIdx = state.columns.length;
+  const colors = ['#6366f1','#f59e0b','#10b981','#ec4899','#06b6d4','#8b5cf6'];
+  state.columns.push({
+    id: uid(),
+    title: 'New Column',
+    color: colors[colIdx % colors.length],
+  });
+  saveState();
+  renderBoard();
+  populateColSelect();
+}
+
+/* ─────────────────────────── Confirm ─────────────────────────── */
+let confirmCallback = null;
+function confirmAction(title, msg, cb) {
+  document.getElementById('confirm-title').textContent = title;
+  document.getElementById('confirm-msg').textContent = msg;
+  confirmCallback = cb;
+  document.getElementById('confirm-overlay').classList.remove('hidden');
+}
+document.getElementById('confirm-ok-btn').addEventListener('click', () => {
+  document.getElementById('confirm-overlay').classList.add('hidden');
+  confirmCallback?.();
+  confirmCallback = null;
+});
+document.getElementById('confirm-cancel-btn').addEventListener('click', () => {
+  document.getElementById('confirm-overlay').classList.add('hidden');
+  confirmCallback = null;
+});
+document.getElementById('confirm-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('confirm-overlay')) {
+    document.getElementById('confirm-overlay').classList.add('hidden');
+    confirmCallback = null;
+  }
+});
+
+/* ─────────────────────────── View switching ─────────────────── */
+let currentView = 'board';
+let calYear  = new Date().getFullYear();
+let calMonth = new Date().getMonth(); // 0-based
+
+function switchView(view) {
+  currentView = view;
+  document.getElementById('board-wrap').style.display      = view === 'board'    ? '' : 'none';
+  document.getElementById('calendar-wrap').classList.toggle('visible', view === 'calendar');
+  document.getElementById('view-board-btn').classList.toggle('active',    view === 'board');
+  document.getElementById('view-calendar-btn').classList.toggle('active', view === 'calendar');
+  // sort control only relevant for board
+  document.getElementById('sort-select').closest('div') && null; // keep visible
+  if (view === 'calendar') renderCalendar();
+}
+
+document.getElementById('view-board-btn').addEventListener('click',     () => switchView('board'));
+document.getElementById('view-calendar-btn').addEventListener('click',  () => switchView('calendar'));
+document.getElementById('cal-prev-btn').addEventListener('click', () => {
+  calMonth--; if (calMonth < 0) { calMonth = 11; calYear--; } renderCalendar();
+});
+document.getElementById('cal-next-btn').addEventListener('click', () => {
+  calMonth++; if (calMonth > 11) { calMonth = 0; calYear++; } renderCalendar();
+});
+document.getElementById('cal-today-btn').addEventListener('click', () => {
+  calYear = new Date().getFullYear(); calMonth = new Date().getMonth(); renderCalendar();
+});
+
+/* ─────────────────────────── Calendar render ─────────────────── */
+const MONTH_NAMES = ['January','February','March','April','May','June',
+                     'July','August','September','October','November','December'];
+const DOW_NAMES   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+function renderCalendar() {
+  const fp = document.getElementById('project-filter').value;
+  document.getElementById('cal-month-label').textContent = `${MONTH_NAMES[calMonth]} ${calYear}`;
+
+  const grid = document.getElementById('cal-grid');
+  grid.innerHTML = '';
+
+  // Day-of-week headers
+  DOW_NAMES.forEach(d => {
+    const h = document.createElement('div');
+    h.className = 'cal-dow';
+    h.textContent = d;
+    grid.appendChild(h);
+  });
+
+  const today     = new Date(); today.setHours(0,0,0,0);
+  const firstDay  = new Date(calYear, calMonth, 1);
+  const totalDays = new Date(calYear, calMonth + 1, 0).getDate();
+  const startDow  = firstDay.getDay(); // 0=Sun
+  const totalCells = Math.ceil((startDow + totalDays) / 7) * 7;
+
+  // Build a map: 'YYYY-MM-DD' → [cards]
+  const cardMap = {};
+  state.cards
+    .filter(c => c.due && (!fp || c.project === fp))
+    .forEach(c => {
+      if (!cardMap[c.due]) cardMap[c.due] = [];
+      cardMap[c.due].push(c);
+    });
+
+  for (let i = 0; i < totalCells; i++) {
+    const dayOffset = i - startDow;
+    const date      = new Date(calYear, calMonth, 1 + dayOffset);
+    const isThisMonth = date.getMonth() === calMonth;
+    const isToday     = date.getTime() === today.getTime();
+
+    const cell = document.createElement('div');
+    cell.className = 'cal-day' +
+      (!isThisMonth ? ' other-month' : '') +
+      (isToday      ? ' today'       : '');
+
+    // Date number
+    const numWrap = document.createElement('div');
+    numWrap.className = 'cal-day-num';
+    const numSpan = document.createElement('span');
+    numSpan.textContent = date.getDate();
+    numWrap.appendChild(numSpan);
+    cell.appendChild(numWrap);
+
+    // Cards for this date
+    const dateKey = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+    const dayCards = cardMap[dateKey] || [];
+    const MAX_PILLS = 3;
+
+    dayCards.slice(0, MAX_PILLS).forEach(card => {
+      const pill = document.createElement('div');
+      pill.className = 'cal-pill';
+      pill.title = card.title;
+
+      const projColor = card.project ? getProjectColor(card.project) : null;
+      const col = state.columns.find(c => c.id === card.col);
+      const baseColor = projColor || col?.color || '#6366f1';
+      pill.style.background = baseColor + '28';
+      pill.style.color       = baseColor;
+      pill.style.borderLeft  = `3px solid ${baseColor}`;
+
+      pill.textContent = card.title;
+      pill.addEventListener('click', () => openCardModal(card));
+      cell.appendChild(pill);
+    });
+
+    if (dayCards.length > MAX_PILLS) {
+      const more = document.createElement('div');
+      more.className = 'cal-more';
+      more.textContent = `+${dayCards.length - MAX_PILLS} more`;
+      // clicking "more" opens the first hidden card for now
+      more.addEventListener('click', () => openCardModal(dayCards[MAX_PILLS]));
+      cell.appendChild(more);
+    }
+
+    grid.appendChild(cell);
+  }
+}
+
+/* ─────────────────────────── Header btn ─────────────────────── */
+document.getElementById('add-card-header-btn').addEventListener('click', () => openCardModal(null));
+document.getElementById('project-filter').addEventListener('change', () => {
+  if (currentView === 'board') renderBoard(); else renderCalendar();
+});
+document.getElementById('sort-select').addEventListener('change', renderBoard);
+
+/* ─────────────────────────── Utils ─────────────────────────── */
+function escHtml(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function cap(s) { return s ? s[0].toUpperCase() + s.slice(1) : ''; }
+
+/* ─────────────────────────── Init ─────────────────────────── */
+renderBoard();
+renderProjectFilter();
+</script>
+</body>
+</html>

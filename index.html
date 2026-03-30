@@ -941,11 +941,29 @@ function saveState() {
   clearTimeout(saveTimer);
   setSyncStatus('saving', 'Saving…');
   saveTimer = setTimeout(async () => {
-    const { error } = await _sb
-      .from('kanban_state')
-      .upsert({ user_id: currentUser.id, state, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
-    if (error) { setSyncStatus('error', 'Sync error'); console.error(error); }
-    else setSyncStatus('saved', 'Saved ✓');
+    // Snapshot user at schedule time — may have signed out before timer fires
+    const userId = currentUser?.id;
+    if (!userId) { setSyncStatus('', ''); return; }
+
+    const dbTimeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('timeout')), 10000)
+    );
+    try {
+      const upsert = _sb
+        .from('kanban_state')
+        .upsert({ user_id: userId, state, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+      const { error } = await Promise.race([upsert, dbTimeout]);
+      if (error) { setSyncStatus('error', 'Sync error'); console.error('Supabase save error:', error); }
+      else setSyncStatus('saved', 'Saved ✓');
+    } catch (err) {
+      if (err.message === 'timeout') {
+        setSyncStatus('error', 'Sync timed out');
+        console.warn('Supabase save timed out — data saved locally');
+      } else {
+        setSyncStatus('error', 'Sync error');
+        console.error('Supabase save error:', err);
+      }
+    }
   }, 800);
 }
 

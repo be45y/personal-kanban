@@ -1654,35 +1654,46 @@ async function initApp() {
     return;
   }
 
-  // Listen for auth changes (sign in, sign out, token refresh)
-  _sb.auth.onAuthStateChange(async (event, session) => {
-    if (session?.user) {
-      currentUser = session.user;
-      const { state: loaded, hadCloudData } = await loadStateFromDB();
-      state = loaded;
-      showApp(session.user);
-      renderBoard();
-      renderProjectFilter();
-      // On fresh sign-in only: offer to import local data if no cloud data exists
-      if (!hadCloudData && event === 'SIGNED_IN') showImportBanner();
-    } else {
-      hideImportBanner();
+  // Safety timeout — if nothing resolves in 8s, fall back to auth screen
+  const safetyTimer = setTimeout(() => {
+    if (!document.getElementById('loading-screen').classList.contains('hidden')) {
+      console.warn('Auth timed out — showing login screen');
       showAuth();
     }
-  });
+  }, 8000);
 
-  // Check existing session
-  const { data: { session } } = await _sb.auth.getSession();
-  if (session?.user) {
-    currentUser = session.user;
-    const { state: loaded } = await loadStateFromDB();
-    state = loaded;
-    showApp(session.user);
-    renderBoard();
-    renderProjectFilter();
-  } else {
-    showAuth();
-  }
+  // onAuthStateChange fires for INITIAL_SESSION on page load (handles existing sessions),
+  // SIGNED_IN on login, and SIGNED_OUT on logout — covers all cases without needing getSession().
+  _sb.auth.onAuthStateChange(async (event, session) => {
+    clearTimeout(safetyTimer);
+    try {
+      if (session?.user) {
+        currentUser = session.user;
+        const { state: loaded, hadCloudData } = await loadStateFromDB();
+        state = loaded;
+        showApp(session.user);
+        renderBoard();
+        renderProjectFilter();
+        // Only prompt import on a fresh explicit sign-in with no cloud data yet
+        if (!hadCloudData && event === 'SIGNED_IN') showImportBanner();
+      } else {
+        hideImportBanner();
+        showAuth();
+      }
+    } catch (err) {
+      console.error('Error during auth state change:', err);
+      // Fall back gracefully — show app with local state
+      state = loadLocalState();
+      if (session?.user) {
+        showApp(session.user);
+        renderBoard();
+        renderProjectFilter();
+        setSyncStatus('error', 'Sync error');
+      } else {
+        showAuth();
+      }
+    }
+  });
 }
 
 initApp();

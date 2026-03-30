@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Kanban Board</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231a1d27'/%3E%3Crect x='3' y='5' width='8' height='22' rx='2.5' fill='%236366f1' opacity='.25'/%3E%3Crect x='4' y='7' width='6' height='4' rx='1.5' fill='%236366f1'/%3E%3Crect x='4' y='13' width='6' height='4' rx='1.5' fill='%236366f1' opacity='.6'/%3E%3Crect x='12' y='5' width='8' height='22' rx='2.5' fill='%23f59e0b' opacity='.25'/%3E%3Crect x='13' y='7' width='6' height='4' rx='1.5' fill='%23f59e0b'/%3E%3Crect x='13' y='13' width='6' height='4' rx='1.5' fill='%23f59e0b' opacity='.6'/%3E%3Crect x='13' y='19' width='6' height='4' rx='1.5' fill='%23f59e0b' opacity='.35'/%3E%3Crect x='21' y='5' width='8' height='22' rx='2.5' fill='%2310b981' opacity='.25'/%3E%3Crect x='22' y='7' width='6' height='4' rx='1.5' fill='%2310b981'/%3E%3C/svg%3E" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -29,6 +30,12 @@
       min-height: 100vh;
       display: flex;
       flex-direction: column;
+    }
+    #app {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
     }
 
     /* ── Header ── */
@@ -529,6 +536,110 @@
     }
     .cal-more:hover { color: var(--accent-hover); background: rgba(99,102,241,.1); }
 
+    /* ── Auth / Loading screens ── */
+    .fullscreen {
+      position: fixed; inset: 0;
+      background: var(--bg);
+      z-index: 300;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .fullscreen.hidden { display: none; }
+
+    .auth-card {
+      width: 380px;
+      max-width: 94vw;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 36px 32px 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+    .auth-logo {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 6px;
+    }
+    .auth-logo svg { flex-shrink: 0; }
+    .auth-logo span { font-size: 1.1rem; font-weight: 700; letter-spacing: -.3px; }
+    .auth-card h2 { font-size: 1rem; font-weight: 600; margin-bottom: 4px; }
+    .auth-card p  { font-size: .82rem; color: var(--text-muted); margin-bottom: 24px; }
+    .auth-error {
+      font-size: .8rem;
+      color: #f87171;
+      background: rgba(239,68,68,.1);
+      border-radius: 7px;
+      padding: 9px 12px;
+      margin-bottom: 14px;
+      display: none;
+    }
+    .auth-error.visible { display: block; }
+    .auth-divider {
+      text-align: center;
+      font-size: .78rem;
+      color: var(--text-muted);
+      margin: 16px 0 4px;
+    }
+    .auth-switch {
+      text-align: center;
+      font-size: .82rem;
+      color: var(--text-muted);
+      margin-top: 18px;
+    }
+    .auth-switch a {
+      color: var(--accent-hover);
+      cursor: pointer;
+      text-decoration: none;
+      font-weight: 500;
+    }
+    .auth-switch a:hover { text-decoration: underline; }
+
+    /* ── Sync status ── */
+    #sync-status {
+      font-size: .75rem;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      color: var(--text-muted);
+      min-width: 80px;
+      transition: color .2s;
+    }
+    #sync-status::before {
+      content: '';
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      flex-shrink: 0;
+      transition: background .2s;
+    }
+    #sync-status.saving { color: #fbbf24; }
+    #sync-status.saving::before { background: #fbbf24; }
+    #sync-status.saved { color: #34d399; }
+    #sync-status.saved::before { background: #34d399; }
+    #sync-status.error { color: #f87171; }
+    #sync-status.error::before { background: #f87171; }
+
+    #user-email {
+      font-size: .75rem;
+      color: var(--text-muted);
+      max-width: 160px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* ── Loading spinner ── */
+    .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
     /* ── Scrollbar ── */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -536,6 +647,51 @@
   </style>
 </head>
 <body>
+
+<!-- Loading screen -->
+<div class="fullscreen" id="loading-screen">
+  <div class="spinner"></div>
+</div>
+
+<!-- Auth screen -->
+<div class="fullscreen hidden" id="auth-screen">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <svg width="28" height="28" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect width="32" height="32" rx="7" fill="#1a1d27"/>
+        <rect x="3" y="5" width="8" height="22" rx="2.5" fill="#6366f1" opacity=".3"/>
+        <rect x="4" y="7" width="6" height="4" rx="1.5" fill="#6366f1"/>
+        <rect x="4" y="13" width="6" height="4" rx="1.5" fill="#6366f1" opacity=".6"/>
+        <rect x="12" y="5" width="8" height="22" rx="2.5" fill="#f59e0b" opacity=".3"/>
+        <rect x="13" y="7" width="6" height="4" rx="1.5" fill="#f59e0b"/>
+        <rect x="13" y="13" width="6" height="4" rx="1.5" fill="#f59e0b" opacity=".6"/>
+        <rect x="13" y="19" width="6" height="4" rx="1.5" fill="#f59e0b" opacity=".35"/>
+        <rect x="21" y="5" width="8" height="22" rx="2.5" fill="#10b981" opacity=".3"/>
+        <rect x="22" y="7" width="6" height="4" rx="1.5" fill="#10b981"/>
+      </svg>
+      <span>Kanban Board</span>
+    </div>
+    <h2 id="auth-title">Welcome back</h2>
+    <p id="auth-subtitle">Sign in to sync your board across all your devices.</p>
+    <div class="auth-error" id="auth-error"></div>
+    <div class="form-group">
+      <label>Email</label>
+      <input type="email" id="auth-email" placeholder="you@example.com" autocomplete="email" />
+    </div>
+    <div class="form-group">
+      <label>Password</label>
+      <input type="password" id="auth-password" placeholder="••••••••" autocomplete="current-password" />
+    </div>
+    <button class="btn btn-primary" id="auth-submit-btn" style="width:100%;padding:10px;font-size:.9rem;margin-top:4px">Sign In</button>
+    <div class="auth-switch">
+      <span id="auth-switch-text">Don't have an account?</span>
+      <a id="auth-switch-link">Sign Up</a>
+    </div>
+  </div>
+</div>
+
+<!-- App wrapper -->
+<div id="app" style="display:none;flex:1;flex-direction:column;min-height:0">
 
 <!-- Header -->
 <header>
@@ -557,8 +713,11 @@
       <option value="due">Due Date</option>
     </select>
   </div>
+  <span id="sync-status" title="Sync status"></span>
+  <span id="user-email"></span>
   <button class="btn btn-ghost" id="manage-projects-btn">Manage Projects</button>
   <button class="btn btn-primary" id="add-card-header-btn">+ Add Card</button>
+  <button class="btn btn-ghost" id="logout-btn" title="Sign out">Sign Out</button>
 </header>
 
 <!-- Board -->
@@ -576,6 +735,8 @@
   </div>
   <div class="cal-grid" id="cal-grid"></div>
 </div>
+
+</div><!-- /#app -->
 
 <!-- Card Modal -->
 <div class="overlay hidden" id="card-overlay">
@@ -661,6 +822,28 @@
 </div>
 
 <script>
+/* ─────────────────────────── Supabase config ───────────────────
+   1. Go to https://supabase.com → New project (free tier)
+   2. Project Settings → API → copy Project URL and anon/public key
+   3. Paste them below, then run this SQL in the Supabase SQL Editor:
+
+      create table kanban_state (
+        id         uuid primary key default gen_random_uuid(),
+        user_id    uuid references auth.users not null unique,
+        state      jsonb not null default '{}',
+        updated_at timestamptz default now()
+      );
+      alter table kanban_state enable row level security;
+      create policy "own state" on kanban_state for all using (auth.uid() = user_id);
+
+   ─────────────────────────────────────────────────────────────── */
+const SUPABASE_URL = 'https://tgofzytwbschhcdyvjad.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_wXRs7bhhdYZDuQn4Lj7umw_eAE5lbP9';
+
+const _sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+let currentUser = null;
+let saveTimer    = null;
+
 /* ─────────────────────────── State ─────────────────────────── */
 const DEFAULT_COLS = [
   { id: 'backlog',     title: 'Backlog',      color: '#7a7f9a' },
@@ -677,11 +860,7 @@ const PROJECT_COLORS = [
 
 function uid() { return Math.random().toString(36).slice(2, 10); }
 
-function loadState() {
-  try {
-    const raw = localStorage.getItem('kanban_v2');
-    if (raw) return JSON.parse(raw);
-  } catch {}
+function defaultState() {
   return {
     columns: DEFAULT_COLS.map(c => ({ ...c })),
     cards: [],
@@ -689,9 +868,49 @@ function loadState() {
   };
 }
 
-function saveState() { localStorage.setItem('kanban_v2', JSON.stringify(state)); }
+function loadLocalState() {
+  try {
+    const raw = localStorage.getItem('kanban_v2');
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return defaultState();
+}
 
-let state = loadState();
+async function loadStateFromDB() {
+  if (!currentUser) return loadLocalState();
+  const { data, error } = await _sb
+    .from('kanban_state')
+    .select('state')
+    .eq('user_id', currentUser.id)
+    .maybeSingle();
+  if (error || !data) return loadLocalState();
+  return data.state || defaultState();
+}
+
+function setSyncStatus(s, text) {
+  const el = document.getElementById('sync-status');
+  if (!el) return;
+  el.className = s;
+  el.textContent = text;
+  if (s === 'saved') setTimeout(() => { if (el.className === 'saved') { el.className = ''; el.textContent = ''; } }, 2500);
+}
+
+function saveState() {
+  // Always persist locally as fallback
+  localStorage.setItem('kanban_v2', JSON.stringify(state));
+  if (!currentUser) return;
+  clearTimeout(saveTimer);
+  setSyncStatus('saving', 'Saving…');
+  saveTimer = setTimeout(async () => {
+    const { error } = await _sb
+      .from('kanban_state')
+      .upsert({ user_id: currentUser.id, state, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+    if (error) { setSyncStatus('error', 'Sync error'); console.error(error); }
+    else setSyncStatus('saved', 'Saved ✓');
+  }, 800);
+}
+
+let state = defaultState();
 
 /* ─────────────────────────── Drag state ─────────────────────── */
 let dragging = null;
@@ -1280,9 +1499,126 @@ function escHtml(s) {
 }
 function cap(s) { return s ? s[0].toUpperCase() + s.slice(1) : ''; }
 
+/* ─────────────────────────── Screen helpers ─────────────────── */
+function showApp(user) {
+  currentUser = user;
+  document.getElementById('loading-screen').classList.add('hidden');
+  document.getElementById('auth-screen').classList.add('hidden');
+  document.getElementById('app').style.display = 'flex';
+  document.getElementById('user-email').textContent = user.email;
+}
+function showAuth() {
+  currentUser = null;
+  document.getElementById('loading-screen').classList.add('hidden');
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('auth-screen').classList.remove('hidden');
+}
+
+/* ─────────────────────────── Auth UI ───────────────────────── */
+let authMode = 'signin'; // 'signin' | 'signup'
+
+function setAuthMode(mode) {
+  authMode = mode;
+  document.getElementById('auth-error').classList.remove('visible');
+  if (mode === 'signup') {
+    document.getElementById('auth-title').textContent    = 'Create an account';
+    document.getElementById('auth-subtitle').textContent = 'Sign up to sync your board across all your devices.';
+    document.getElementById('auth-submit-btn').textContent = 'Sign Up';
+    document.getElementById('auth-switch-text').textContent = 'Already have an account?';
+    document.getElementById('auth-switch-link').textContent = 'Sign In';
+    document.getElementById('auth-password').autocomplete = 'new-password';
+  } else {
+    document.getElementById('auth-title').textContent    = 'Welcome back';
+    document.getElementById('auth-subtitle').textContent = 'Sign in to sync your board across all your devices.';
+    document.getElementById('auth-submit-btn').textContent = 'Sign In';
+    document.getElementById('auth-switch-text').textContent = "Don't have an account?";
+    document.getElementById('auth-switch-link').textContent = 'Sign Up';
+    document.getElementById('auth-password').autocomplete = 'current-password';
+  }
+}
+
+document.getElementById('auth-switch-link').addEventListener('click', () =>
+  setAuthMode(authMode === 'signin' ? 'signup' : 'signin')
+);
+
+async function handleAuthSubmit() {
+  const email    = document.getElementById('auth-email').value.trim();
+  const password = document.getElementById('auth-password').value;
+  const errEl    = document.getElementById('auth-error');
+  const btn      = document.getElementById('auth-submit-btn');
+
+  if (!email || !password) {
+    errEl.textContent = 'Please enter your email and password.';
+    errEl.classList.add('visible'); return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = authMode === 'signin' ? 'Signing in…' : 'Creating account…';
+  errEl.classList.remove('visible');
+
+  let error;
+  if (authMode === 'signin') {
+    ({ error } = await _sb.auth.signInWithPassword({ email, password }));
+  } else {
+    ({ error } = await _sb.auth.signUp({ email, password }));
+  }
+
+  btn.disabled = false;
+  setAuthMode(authMode); // restore button text
+
+  if (error) {
+    errEl.textContent = error.message;
+    errEl.classList.add('visible');
+  }
+  // on success, onAuthStateChange fires and handles the rest
+}
+
+document.getElementById('auth-submit-btn').addEventListener('click', handleAuthSubmit);
+document.getElementById('auth-email').addEventListener('keydown',    e => { if (e.key === 'Enter') document.getElementById('auth-password').focus(); });
+document.getElementById('auth-password').addEventListener('keydown', e => { if (e.key === 'Enter') handleAuthSubmit(); });
+
+document.getElementById('logout-btn').addEventListener('click', async () => {
+  await _sb.auth.signOut();
+});
+
 /* ─────────────────────────── Init ─────────────────────────── */
-renderBoard();
-renderProjectFilter();
+async function initApp() {
+  // Validate config
+  if (SUPABASE_URL === 'YOUR_SUPABASE_URL' || SUPABASE_KEY === 'YOUR_SUPABASE_ANON_KEY') {
+    document.getElementById('loading-screen').classList.add('hidden');
+    document.getElementById('auth-screen').classList.remove('hidden');
+    document.getElementById('auth-error').textContent =
+      '⚙️ Supabase is not configured yet. Open index.html and fill in SUPABASE_URL and SUPABASE_KEY, then run the SQL setup. See comments in the code for instructions.';
+    document.getElementById('auth-error').classList.add('visible');
+    document.getElementById('auth-submit-btn').disabled = true;
+    return;
+  }
+
+  // Listen for auth changes (sign in, sign out, token refresh)
+  _sb.auth.onAuthStateChange(async (event, session) => {
+    if (session?.user) {
+      state = await loadStateFromDB();
+      showApp(session.user);
+      renderBoard();
+      renderProjectFilter();
+    } else {
+      showAuth();
+    }
+  });
+
+  // Check existing session
+  const { data: { session } } = await _sb.auth.getSession();
+  if (session?.user) {
+    state = await loadStateFromDB();
+    showApp(session.user);
+    renderBoard();
+    renderProjectFilter();
+  } else {
+    showAuth();
+  }
+}
+
+initApp();
 </script>
 </body>
 </html>

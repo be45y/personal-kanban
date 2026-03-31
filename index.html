@@ -979,26 +979,32 @@ async function importLocalDataToDB() {
   return true;
 }
 
-/* ── Session keep-alive on tab refocus ──
+/* ── Session keep-alive ──
    Browsers suspend inactive tabs, so Supabase's automatic token refresh
-   stops running. When the user returns after a long idle, the token may be
-   expired, causing saves to hang. We refresh the session on visibility change
-   if more than 5 minutes have passed since the tab was last active. */
+   stops running. We track activity and refresh the session inline before
+   any save attempt if the tab has been idle too long. */
 let lastActiveAt = Date.now();
-document.addEventListener('visibilitychange', async () => {
-  if (document.visibilityState !== 'visible' || !currentUser) return;
+const STALE_MS = 5 * 60 * 1000; // 5 minutes
+document.addEventListener('pointerdown', () => { lastActiveAt = Date.now(); }, { passive: true });
+document.addEventListener('keydown',     () => { lastActiveAt = Date.now(); }, { passive: true });
+
+async function ensureFreshSession() {
   const idleMs = Date.now() - lastActiveAt;
   lastActiveAt = Date.now();
-  if (idleMs < 5 * 60 * 1000) return; // less than 5 min, no need
+  if (idleMs < STALE_MS) return true;
   try {
-    const { error } = await _sb.auth.refreshSession();
-    if (error) console.warn('Session refresh failed:', error.message);
+    const { data, error } = await _sb.auth.refreshSession();
+    if (error) {
+      console.warn('Session refresh failed:', error.message);
+      return false;
+    }
+    if (data?.user) currentUser = data.user;
+    return true;
   } catch (err) {
     console.warn('Session refresh error:', err);
+    return false;
   }
-});
-// Keep lastActiveAt current while the tab is in use
-document.addEventListener('pointerdown', () => { lastActiveAt = Date.now(); }, { passive: true });
+}
 
 function setSyncStatus(s, text) {
   const el = document.getElementById('sync-status');
@@ -1029,6 +1035,7 @@ async function doUpsert(userId, payload) {
         const wait = attempt * 2000; // 2s, 4s backoff
         setSyncStatus('saving', `Retrying… (${attempt}/${MAX_RETRIES})`);
         await new Promise(r => setTimeout(r, wait));
+        await ensureFreshSession(); // refresh token before retrying
         continue;
       }
       return { ok: false, msg: isTimeout ? 'Sync timed out' : 'Sync error' };
@@ -1043,6 +1050,8 @@ function saveState() {
   clearTimeout(saveTimer);
   setSyncStatus('saving', 'Saving…');
   saveTimer = setTimeout(async () => {
+    // Refresh session first if tab was idle — must complete before upsert
+    await ensureFreshSession();
     const userId = currentUser?.id;
     if (!userId) { setSyncStatus('', ''); return; }
     const payload = { user_id: userId, state, updated_at: new Date().toISOString() };

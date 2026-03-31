@@ -630,6 +630,55 @@
       white-space: nowrap;
     }
 
+    /* ── Status history ── */
+    .history-section { margin-top: 4px; }
+    .history-section label { display: block; font-size: .78rem; color: var(--text-muted); margin-bottom: 8px; font-weight: 500; }
+    .history-list {
+      max-height: 180px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      padding-left: 14px;
+      border-left: 2px solid var(--border);
+      margin-left: 6px;
+    }
+    .history-item {
+      position: relative;
+      padding: 6px 0 6px 16px;
+      font-size: .8rem;
+      line-height: 1.45;
+      color: var(--text-muted);
+    }
+    .history-item::before {
+      content: '';
+      position: absolute;
+      left: -8px;
+      top: 11px;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--border);
+      border: 2px solid var(--surface);
+    }
+    .history-item:first-child::before { background: var(--accent); }
+    .history-col-name {
+      font-weight: 600;
+      color: var(--text);
+    }
+    .history-arrow { margin: 0 5px; color: var(--text-muted); }
+    .history-time {
+      font-size: .72rem;
+      color: var(--text-muted);
+      opacity: .7;
+      margin-left: 6px;
+    }
+    .history-empty {
+      font-size: .8rem;
+      color: var(--text-muted);
+      padding: 4px 0;
+      font-style: italic;
+    }
+
     /* ── Import banner ── */
     #import-banner {
       display: none;
@@ -807,6 +856,10 @@
     <div class="form-group">
       <label>Due Date</label>
       <input type="date" id="card-due-input" />
+    </div>
+    <div class="history-section" id="history-section" style="display:none">
+      <label>Status History</label>
+      <div class="history-list" id="history-list"></div>
     </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="card-cancel-btn">Cancel</button>
@@ -993,6 +1046,14 @@ function getProjectName(projectId) {
   const p = state.projects.find(p => p.id === projectId);
   return p ? p.name : null;
 }
+function getColTitle(colId) {
+  const c = state.columns.find(c => c.id === colId);
+  return c ? c.title : 'Unknown';
+}
+function addHistoryEntry(card, fromCol, toCol) {
+  if (!card.history) card.history = [];
+  card.history.push({ from: fromCol, to: toCol, at: new Date().toISOString() });
+}
 
 function formatDate(str) {
   if (!str) return null;
@@ -1092,6 +1153,8 @@ function renderBoard() {
       if (!dragging) return;
       const card = state.cards.find(c => c.id === dragging);
       if (!card) return;
+      const prevCol = card.col;
+      if (prevCol !== col.id) addHistoryEntry(card, prevCol, col.id);
       card.col = col.id;
       // Reorder
       const visCards = Array.from(wrap.children)
@@ -1227,6 +1290,30 @@ function openCardModal(card, colId) {
   populateColSelect(card?.col || defaultColId);
   renderProjectChips(card?.project || null);
 
+  // Render status history
+  const histSection = document.getElementById('history-section');
+  const histList    = document.getElementById('history-list');
+  if (card && card.history && card.history.length > 0) {
+    histSection.style.display = '';
+    histList.innerHTML = '';
+    // Show newest first
+    [...card.history].reverse().forEach(entry => {
+      const item = document.createElement('div');
+      item.className = 'history-item';
+      const d = new Date(entry.at);
+      const timeStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+        + ' ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      if (entry.from === null) {
+        item.innerHTML = `Created in <span class="history-col-name">${escHtml(getColTitle(entry.to))}</span><span class="history-time">${escHtml(timeStr)}</span>`;
+      } else {
+        item.innerHTML = `<span class="history-col-name">${escHtml(getColTitle(entry.from))}</span><span class="history-arrow">→</span><span class="history-col-name">${escHtml(getColTitle(entry.to))}</span><span class="history-time">${escHtml(timeStr)}</span>`;
+      }
+      histList.appendChild(item);
+    });
+  } else {
+    histSection.style.display = 'none';
+  }
+
   document.getElementById('card-overlay').classList.remove('hidden');
   setTimeout(() => document.getElementById('card-title-input').focus(), 50);
 }
@@ -1291,9 +1378,11 @@ document.getElementById('card-save-btn').addEventListener('click', () => {
   const desc = document.getElementById('card-desc-input').innerHTML.trim();
 
   if (editingCard) {
+    if (editingCard.col !== col) addHistoryEntry(editingCard, editingCard.col, col);
     Object.assign(editingCard, { title, desc, col, project, priority, due });
   } else {
-    state.cards.push({ id: uid(), title, desc, col, project, priority, due });
+    const history = [{ from: null, to: col, at: new Date().toISOString() }];
+    state.cards.push({ id: uid(), title, desc, col, project, priority, due, history });
   }
 
   saveState();

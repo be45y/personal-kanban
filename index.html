@@ -934,6 +934,34 @@ function setSyncStatus(s, text) {
   if (s === 'saved') setTimeout(() => { if (el.className === 'saved') { el.className = ''; el.textContent = ''; } }, 2500);
 }
 
+async function doUpsert(userId, payload) {
+  const TIMEOUT = 15000;
+  const MAX_RETRIES = 3;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    const timer = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('timeout')), TIMEOUT)
+    );
+    try {
+      const upsert = _sb
+        .from('kanban_state')
+        .upsert(payload, { onConflict: 'user_id' });
+      const { error } = await Promise.race([upsert, timer]);
+      if (!error) return { ok: true };
+      // Supabase returned an error — don't retry, it won't help
+      return { ok: false, msg: error.message || 'Sync error' };
+    } catch (err) {
+      const isTimeout = err.message === 'timeout';
+      if (attempt < MAX_RETRIES && isTimeout) {
+        const wait = attempt * 2000; // 2s, 4s backoff
+        setSyncStatus('saving', `Retrying… (${attempt}/${MAX_RETRIES})`);
+        await new Promise(r => setTimeout(r, wait));
+        continue;
+      }
+      return { ok: false, msg: isTimeout ? 'Sync timed out' : 'Sync error' };
+    }
+  }
+}
+
 function saveState() {
   // Always persist locally as fallback
   localStorage.setItem('kanban_v2', JSON.stringify(state));
@@ -941,29 +969,12 @@ function saveState() {
   clearTimeout(saveTimer);
   setSyncStatus('saving', 'Saving…');
   saveTimer = setTimeout(async () => {
-    // Snapshot user at schedule time — may have signed out before timer fires
     const userId = currentUser?.id;
     if (!userId) { setSyncStatus('', ''); return; }
-
-    const dbTimeout = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('timeout')), 10000)
-    );
-    try {
-      const upsert = _sb
-        .from('kanban_state')
-        .upsert({ user_id: userId, state, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
-      const { error } = await Promise.race([upsert, dbTimeout]);
-      if (error) { setSyncStatus('error', 'Sync error'); console.error('Supabase save error:', error); }
-      else setSyncStatus('saved', 'Saved ✓');
-    } catch (err) {
-      if (err.message === 'timeout') {
-        setSyncStatus('error', 'Sync timed out');
-        console.warn('Supabase save timed out — data saved locally');
-      } else {
-        setSyncStatus('error', 'Sync error');
-        console.error('Supabase save error:', err);
-      }
-    }
+    const payload = { user_id: userId, state, updated_at: new Date().toISOString() };
+    const result = await doUpsert(userId, payload);
+    if (result.ok) setSyncStatus('saved', 'Saved ✓');
+    else { setSyncStatus('error', result.msg); console.warn('Save failed:', result.msg); }
   }, 800);
 }
 
@@ -1671,6 +1682,10 @@ async function initApp() {
     document.getElementById('auth-submit-btn').disabled = true;
     return;
   }
+
+  // ── Wake up Supabase early (free tier sleeps after inactivity).
+  // Fire-and-forget ping so the DB is warm by the time we need to save.
+  _sb.from('kanban_state').select('user_id', { count: 'exact', head: true }).limit(0).then(() => {}, () => {});
 
   // ── Step 1: Resolve the initial session directly via getSession().
   // This is guaranteed to resolve and handles the "returning user" case

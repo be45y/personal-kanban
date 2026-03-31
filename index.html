@@ -979,6 +979,27 @@ async function importLocalDataToDB() {
   return true;
 }
 
+/* ── Session keep-alive on tab refocus ──
+   Browsers suspend inactive tabs, so Supabase's automatic token refresh
+   stops running. When the user returns after a long idle, the token may be
+   expired, causing saves to hang. We refresh the session on visibility change
+   if more than 5 minutes have passed since the tab was last active. */
+let lastActiveAt = Date.now();
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState !== 'visible' || !currentUser) return;
+  const idleMs = Date.now() - lastActiveAt;
+  lastActiveAt = Date.now();
+  if (idleMs < 5 * 60 * 1000) return; // less than 5 min, no need
+  try {
+    const { error } = await _sb.auth.refreshSession();
+    if (error) console.warn('Session refresh failed:', error.message);
+  } catch (err) {
+    console.warn('Session refresh error:', err);
+  }
+});
+// Keep lastActiveAt current while the tab is in use
+document.addEventListener('pointerdown', () => { lastActiveAt = Date.now(); }, { passive: true });
+
 function setSyncStatus(s, text) {
   const el = document.getElementById('sync-status');
   if (!el) return;

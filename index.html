@@ -1043,7 +1043,7 @@ async function doSave() {
       });
 
       const resp = await Promise.race([
-        fetch(`${SUPABASE_URL}/rest/v1/kanban_state`, {
+        fetch(`${SUPABASE_URL}/rest/v1/kanban_state?on_conflict=user_id`, {
           method: 'POST',
           headers: {
             'apikey': SUPABASE_KEY,

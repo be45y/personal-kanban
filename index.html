@@ -979,32 +979,15 @@ async function importLocalDataToDB() {
   return true;
 }
 
-/* ── Session keep-alive ──
-   Browsers suspend inactive tabs, so Supabase's automatic token refresh
-   stops running. We track activity and refresh the session inline before
-   any save attempt if the tab has been idle too long. */
-let lastActiveAt = Date.now();
-const STALE_MS = 5 * 60 * 1000; // 5 minutes
-document.addEventListener('pointerdown', () => { lastActiveAt = Date.now(); }, { passive: true });
-document.addEventListener('keydown',     () => { lastActiveAt = Date.now(); }, { passive: true });
-
-async function ensureFreshSession() {
-  const idleMs = Date.now() - lastActiveAt;
-  lastActiveAt = Date.now();
-  if (idleMs < STALE_MS) return true;
-  try {
-    const { data, error } = await _sb.auth.refreshSession();
-    if (error) {
-      console.warn('Session refresh failed:', error.message);
-      return false;
-    }
-    if (data?.user) currentUser = data.user;
-    return true;
-  } catch (err) {
-    console.warn('Session refresh error:', err);
-    return false;
-  }
-}
+/* ── Robust cloud save with tab-switch recovery ──
+   Browsers freeze timers and network requests in background tabs.
+   A save that starts just before/during a tab switch gets frozen mid-flight
+   and the promise never resolves. We fix this by:
+   1. Tracking a `dirty` flag — set on edit, cleared on successful save
+   2. Using an AbortController so we can cancel hung requests
+   3. On tab refocus: abort any stuck save, refresh session, retry fresh */
+let dirty = false;
+let saveAbort = null; // current AbortController
 
 function setSyncStatus(s, text) {
   const el = document.getElementById('sync-status');
@@ -1014,31 +997,59 @@ function setSyncStatus(s, text) {
   if (s === 'saved') setTimeout(() => { if (el.className === 'saved') { el.className = ''; el.textContent = ''; } }, 2500);
 }
 
-async function doUpsert(userId, payload) {
-  const TIMEOUT = 15000;
+async function refreshSession() {
+  try {
+    const { data, error } = await _sb.auth.refreshSession();
+    if (!error && data?.user) currentUser = data.user;
+    return !error;
+  } catch { return false; }
+}
+
+async function doSave() {
+  const userId = currentUser?.id;
+  if (!userId) { dirty = false; setSyncStatus('', ''); return; }
+
+  // Abort any previous in-flight save
+  if (saveAbort) saveAbort.abort();
+  saveAbort = new AbortController();
+  const signal = saveAbort.signal;
+
+  setSyncStatus('saving', 'Saving…');
+
   const MAX_RETRIES = 3;
+  const TIMEOUT = 12000;
+
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    const timer = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('timeout')), TIMEOUT)
-    );
+    if (signal.aborted) return; // cancelled by tab-refocus recovery
+
     try {
+      const timer = new Promise((_, reject) => {
+        const id = setTimeout(() => reject(new Error('timeout')), TIMEOUT);
+        signal.addEventListener('abort', () => { clearTimeout(id); reject(new Error('aborted')); });
+      });
       const upsert = _sb
         .from('kanban_state')
-        .upsert(payload, { onConflict: 'user_id' });
+        .upsert({ user_id: userId, state, updated_at: new Date().toISOString() }, { onConflict: 'user_id' })
+        .abortSignal(signal);
       const { error } = await Promise.race([upsert, timer]);
-      if (!error) return { ok: true };
-      // Supabase returned an error — don't retry, it won't help
-      return { ok: false, msg: error.message || 'Sync error' };
+
+      if (signal.aborted) return;
+      if (!error) { dirty = false; setSyncStatus('saved', 'Saved ✓'); return; }
+      // Supabase error (auth, RLS) — don't retry
+      setSyncStatus('error', error.message || 'Sync error');
+      console.warn('Supabase save error:', error);
+      return;
     } catch (err) {
-      const isTimeout = err.message === 'timeout';
-      if (attempt < MAX_RETRIES && isTimeout) {
-        const wait = attempt * 2000; // 2s, 4s backoff
+      if (err.message === 'aborted' || signal.aborted) return;
+      if (err.message === 'timeout' && attempt < MAX_RETRIES) {
         setSyncStatus('saving', `Retrying… (${attempt}/${MAX_RETRIES})`);
-        await new Promise(r => setTimeout(r, wait));
-        await ensureFreshSession(); // refresh token before retrying
+        await new Promise(r => setTimeout(r, attempt * 2000));
+        await refreshSession();
         continue;
       }
-      return { ok: false, msg: isTimeout ? 'Sync timed out' : 'Sync error' };
+      setSyncStatus('error', err.message === 'timeout' ? 'Sync timed out' : 'Sync error');
+      console.warn('Save failed:', err.message);
+      return;
     }
   }
 }
@@ -1047,19 +1058,24 @@ function saveState() {
   // Always persist locally as fallback
   localStorage.setItem('kanban_v2', JSON.stringify(state));
   if (!currentUser) return;
+  dirty = true;
   clearTimeout(saveTimer);
-  setSyncStatus('saving', 'Saving…');
-  saveTimer = setTimeout(async () => {
-    // Refresh session first if tab was idle — must complete before upsert
-    await ensureFreshSession();
-    const userId = currentUser?.id;
-    if (!userId) { setSyncStatus('', ''); return; }
-    const payload = { user_id: userId, state, updated_at: new Date().toISOString() };
-    const result = await doUpsert(userId, payload);
-    if (result.ok) setSyncStatus('saved', 'Saved ✓');
-    else { setSyncStatus('error', result.msg); console.warn('Save failed:', result.msg); }
-  }, 800);
+  saveTimer = setTimeout(() => doSave(), 800);
 }
+
+// ── Tab-refocus recovery ──
+// When the tab becomes visible again, if there's an unsaved change,
+// abort the stuck save and fire a completely fresh one.
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState !== 'visible' || !currentUser || !dirty) return;
+  // Abort any frozen in-flight save
+  if (saveAbort) saveAbort.abort();
+  clearTimeout(saveTimer);
+  // Small delay to let the browser fully wake up networking
+  await new Promise(r => setTimeout(r, 300));
+  await refreshSession();
+  doSave();
+});
 
 let state = defaultState();
 

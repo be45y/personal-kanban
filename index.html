@@ -979,15 +979,16 @@ async function importLocalDataToDB() {
   return true;
 }
 
-/* ── Robust cloud save with tab-switch recovery ──
-   Browsers freeze timers and network requests in background tabs.
-   A save that starts just before/during a tab switch gets frozen mid-flight
-   and the promise never resolves. We fix this by:
-   1. Tracking a `dirty` flag — set on edit, cleared on successful save
-   2. Using an AbortController so we can cancel hung requests
-   3. On tab refocus: abort any stuck save, refresh session, retry fresh */
+/* ── Cloud save via raw fetch ──
+   The Supabase JS client keeps internal state (connection pools, auth
+   headers, realtime refs) that becomes stale when the browser suspends a
+   background tab. Even a 1-second tab switch can break it, causing
+   subsequent client-based saves to hang indefinitely.
+   Fix: bypass the client entirely for writes and use a plain fetch()
+   against the Supabase REST API. fetch() is completely stateless —
+   every call opens a fresh TCP connection with no client-side baggage. */
 let dirty = false;
-let saveAbort = null; // current AbortController
+let saveAbort = null;
 
 function setSyncStatus(s, text) {
   const el = document.getElementById('sync-status');
@@ -997,12 +998,17 @@ function setSyncStatus(s, text) {
   if (s === 'saved') setTimeout(() => { if (el.className === 'saved') { el.className = ''; el.textContent = ''; } }, 2500);
 }
 
-async function refreshSession() {
+function getAccessToken() {
+  // Read the token directly from Supabase's localStorage entry.
+  // This avoids calling getSession() which can itself hang after tab switches.
   try {
-    const { data, error } = await _sb.auth.refreshSession();
-    if (!error && data?.user) currentUser = data.user;
-    return !error;
-  } catch { return false; }
+    const storageKey = Object.keys(localStorage).find(k => k.startsWith('sb-') && k.endsWith('-auth-token'));
+    if (storageKey) {
+      const raw = JSON.parse(localStorage.getItem(storageKey));
+      if (raw?.access_token) return raw.access_token;
+    }
+  } catch {}
+  return null;
 }
 
 async function doSave() {
@@ -1014,37 +1020,59 @@ async function doSave() {
   saveAbort = new AbortController();
   const signal = saveAbort.signal;
 
+  const token = getAccessToken();
+  if (!token) { setSyncStatus('error', 'No auth token'); return; }
+
   setSyncStatus('saving', 'Saving…');
+
+  const body = JSON.stringify({
+    user_id: userId,
+    state,
+    updated_at: new Date().toISOString(),
+  });
 
   const MAX_RETRIES = 3;
   const TIMEOUT = 12000;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    if (signal.aborted) return; // cancelled by tab-refocus recovery
-
+    if (signal.aborted) return;
     try {
       const timer = new Promise((_, reject) => {
         const id = setTimeout(() => reject(new Error('timeout')), TIMEOUT);
-        signal.addEventListener('abort', () => { clearTimeout(id); reject(new Error('aborted')); });
+        signal.addEventListener('abort', () => { clearTimeout(id); reject(new Error('aborted')); }, { once: true });
       });
-      const upsert = _sb
-        .from('kanban_state')
-        .upsert({ user_id: userId, state, updated_at: new Date().toISOString() }, { onConflict: 'user_id' })
-        .abortSignal(signal);
-      const { error } = await Promise.race([upsert, timer]);
+
+      const resp = await Promise.race([
+        fetch(`${SUPABASE_URL}/rest/v1/kanban_state`, {
+          method: 'POST',
+          headers: {
+            'apikey': SUPABASE_KEY,
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'resolution=merge-duplicates',
+          },
+          body,
+          signal,
+        }),
+        timer,
+      ]);
 
       if (signal.aborted) return;
-      if (!error) { dirty = false; setSyncStatus('saved', 'Saved ✓'); return; }
-      // Supabase error (auth, RLS) — don't retry
-      setSyncStatus('error', error.message || 'Sync error');
-      console.warn('Supabase save error:', error);
+      if (resp.ok || resp.status === 201) {
+        dirty = false;
+        setSyncStatus('saved', 'Saved ✓');
+        return;
+      }
+      // Server returned an error — don't retry
+      const errText = await resp.text().catch(() => '');
+      setSyncStatus('error', `Sync error (${resp.status})`);
+      console.warn('Save error:', resp.status, errText);
       return;
     } catch (err) {
-      if (err.message === 'aborted' || signal.aborted) return;
+      if (err.name === 'AbortError' || err.message === 'aborted' || signal.aborted) return;
       if (err.message === 'timeout' && attempt < MAX_RETRIES) {
         setSyncStatus('saving', `Retrying… (${attempt}/${MAX_RETRIES})`);
         await new Promise(r => setTimeout(r, attempt * 2000));
-        await refreshSession();
         continue;
       }
       setSyncStatus('error', err.message === 'timeout' ? 'Sync timed out' : 'Sync error');
@@ -1064,17 +1092,14 @@ function saveState() {
 }
 
 // ── Tab-refocus recovery ──
-// When the tab becomes visible again, if there's an unsaved change,
-// abort the stuck save and fire a completely fresh one.
-document.addEventListener('visibilitychange', async () => {
+// If a save was pending or stuck when the tab was backgrounded, abort it
+// and fire a completely fresh fetch when the tab comes back.
+document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible' || !currentUser || !dirty) return;
-  // Abort any frozen in-flight save
   if (saveAbort) saveAbort.abort();
   clearTimeout(saveTimer);
-  // Small delay to let the browser fully wake up networking
-  await new Promise(r => setTimeout(r, 300));
-  await refreshSession();
-  doSave();
+  // 200ms delay lets the browser fully restore networking
+  saveTimer = setTimeout(() => doSave(), 200);
 });
 
 let state = defaultState();

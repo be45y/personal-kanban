@@ -679,6 +679,61 @@
       font-style: italic;
     }
 
+    /* ── Archive view ── */
+    #archive-wrap {
+      flex: 1;
+      padding: 20px 24px 32px;
+      display: none;
+      flex-direction: column;
+      gap: 16px;
+    }
+    #archive-wrap.visible { display: flex; }
+    .archive-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .archive-header h2 { font-size: 1rem; font-weight: 600; }
+    .archive-count {
+      font-size: .78rem;
+      color: var(--text-muted);
+      background: var(--surface2);
+      border-radius: 99px;
+      padding: 2px 10px;
+    }
+    .archive-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .archive-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+    .archive-row:hover { border-color: #4b5076; }
+    .archive-row-title { flex: 1; font-size: .88rem; font-weight: 500; }
+    .archive-row-meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: .78rem;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+    .archive-empty {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: .9rem;
+      margin-top: 40px;
+    }
+
     /* ── Import banner ── */
     #import-banner {
       display: none;
@@ -763,6 +818,7 @@
   <div class="view-toggle">
     <button class="view-btn active" id="view-board-btn">⊞ Board</button>
     <button class="view-btn" id="view-calendar-btn">◫ Calendar</button>
+    <button class="view-btn" id="view-archive-btn">▤ Archive</button>
   </div>
   <div class="header-spacer"></div>
   <div id="filter-bar">
@@ -807,6 +863,15 @@
     <button class="btn btn-ghost cal-today-btn" id="cal-today-btn">Today</button>
   </div>
   <div class="cal-grid" id="cal-grid"></div>
+</div>
+
+<!-- Archive -->
+<div id="archive-wrap">
+  <div class="archive-header">
+    <h2>Archived Cards</h2>
+    <span class="archive-count" id="archive-count">0</span>
+  </div>
+  <div class="archive-list" id="archive-list"></div>
 </div>
 
 </div><!-- /#app -->
@@ -942,6 +1007,7 @@ function defaultState() {
     columns: DEFAULT_COLS.map(c => ({ ...c })),
     cards: [],
     projects: [],
+    archived: [],
   };
 }
 
@@ -1156,6 +1222,87 @@ function getFilteredCards(colId) {
     });
   }
   return cards;
+}
+
+/* ── Auto-archive ── */
+function autoArchive() {
+  if (!state.archived) state.archived = [];
+  const now = Date.now();
+  const WEEK = 7 * 24 * 60 * 60 * 1000;
+  const toArchive = [];
+
+  state.cards = state.cards.filter(card => {
+    if (card.col !== 'done') return true;
+    // Find when card was moved to "done"
+    let movedToDoneAt = null;
+    if (card.history && card.history.length) {
+      for (let i = card.history.length - 1; i >= 0; i--) {
+        if (card.history[i].to === 'done') { movedToDoneAt = new Date(card.history[i].at).getTime(); break; }
+      }
+    }
+    if (!movedToDoneAt) return true; // no history — keep on board
+    if (now - movedToDoneAt >= WEEK) {
+      card.archivedAt = new Date().toISOString();
+      toArchive.push(card);
+      return false; // remove from cards
+    }
+    return true;
+  });
+
+  if (toArchive.length) {
+    state.archived.push(...toArchive);
+    saveState();
+  }
+}
+
+function renderArchive() {
+  if (!state.archived) state.archived = [];
+  const list = document.getElementById('archive-list');
+  const countEl = document.getElementById('archive-count');
+  countEl.textContent = state.archived.length;
+
+  if (!state.archived.length) {
+    list.innerHTML = '<div class="archive-empty">No archived cards yet. Cards in Done for 7+ days are automatically archived.</div>';
+    return;
+  }
+
+  list.innerHTML = '';
+  // Sort newest archived first
+  const sorted = [...state.archived].sort((a, b) => (b.archivedAt || '').localeCompare(a.archivedAt || ''));
+  sorted.forEach(card => {
+    const proj = state.projects.find(p => p.id === card.project);
+    const row = document.createElement('div');
+    row.className = 'archive-row';
+    if (proj) row.style.borderLeftColor = proj.color;
+    if (proj) row.style.borderLeftWidth = '3px';
+
+    const archivedDate = card.archivedAt ? new Date(card.archivedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+
+    row.innerHTML = `
+      <span class="archive-row-title">${card.title}</span>
+      <span class="archive-row-meta">
+        ${proj ? `<span style="color:${proj.color}">${proj.name}</span>` : ''}
+        <span>Archived ${archivedDate}</span>
+      </span>
+      <button class="btn btn-ghost" style="padding:4px 10px;font-size:.78rem;" data-restore-id="${card.id}">Restore</button>
+    `;
+    list.appendChild(row);
+  });
+
+  list.querySelectorAll('[data-restore-id]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.restoreId;
+      const idx = state.archived.findIndex(c => c.id === id);
+      if (idx === -1) return;
+      const card = state.archived.splice(idx, 1)[0];
+      delete card.archivedAt;
+      card.col = 'done'; // restore back to Done
+      addHistoryEntry(card, 'archive', 'done');
+      state.cards.push(card);
+      saveState();
+      renderArchive();
+    });
+  });
 }
 
 function renderBoard() {
@@ -1605,15 +1752,17 @@ function switchView(view) {
   currentView = view;
   document.getElementById('board-wrap').style.display      = view === 'board'    ? '' : 'none';
   document.getElementById('calendar-wrap').classList.toggle('visible', view === 'calendar');
-  document.getElementById('view-board-btn').classList.toggle('active',    view === 'board');
-  document.getElementById('view-calendar-btn').classList.toggle('active', view === 'calendar');
-  // sort control only relevant for board
-  document.getElementById('sort-select').closest('div') && null; // keep visible
+  document.getElementById('archive-wrap').classList.toggle('visible',  view === 'archive');
+  document.getElementById('view-board-btn').classList.toggle('active',     view === 'board');
+  document.getElementById('view-calendar-btn').classList.toggle('active',  view === 'calendar');
+  document.getElementById('view-archive-btn').classList.toggle('active',   view === 'archive');
   if (view === 'calendar') renderCalendar();
+  if (view === 'archive') renderArchive();
 }
 
 document.getElementById('view-board-btn').addEventListener('click',     () => switchView('board'));
 document.getElementById('view-calendar-btn').addEventListener('click',  () => switchView('calendar'));
+document.getElementById('view-archive-btn').addEventListener('click',   () => switchView('archive'));
 document.getElementById('cal-prev-btn').addEventListener('click', () => {
   calMonth--; if (calMonth < 0) { calMonth = 11; calYear--; } renderCalendar();
 });
@@ -1856,6 +2005,8 @@ async function initApp() {
       currentUser = session.user;
       const { state: loaded } = await loadStateFromDB();
       state = loaded;
+      if (!state.archived) state.archived = [];
+      autoArchive();
       showApp(session.user);
       renderBoard();
       renderProjectFilter();
@@ -1878,6 +2029,8 @@ async function initApp() {
         currentUser = session.user;
         const { state: loaded, hadCloudData } = await loadStateFromDB();
         state = loaded;
+        if (!state.archived) state.archived = [];
+        autoArchive();
         showApp(session.user);
         renderBoard();
         renderProjectFilter();

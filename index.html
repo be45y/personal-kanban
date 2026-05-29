@@ -1987,15 +1987,52 @@ async function handleAuthSubmit() {
 
   if (authMode === 'newpassword') {
     btn.textContent = 'Updating…';
-    const { error } = await _sb.auth.updateUser({ password });
-    btn.disabled = false;
-    if (error) {
-      errEl.textContent = error.message;
-      errEl.classList.add('visible');
-      setAuthMode('newpassword');
-    } else {
-      // Password updated — reload to enter the app normally
-      window.location.reload();
+    try {
+      const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 15000));
+      const update = _sb.auth.updateUser({ password });
+      const { error } = await Promise.race([update, timeout]);
+      btn.disabled = false;
+      if (error) {
+        errEl.textContent = error.message;
+        errEl.classList.add('visible');
+        setAuthMode('newpassword');
+      } else {
+        // Password updated — reload to enter the app normally
+        window.location.href = window.location.pathname; // clear hash fragment
+      }
+    } catch (err) {
+      btn.disabled = false;
+      if (err.message === 'timeout') {
+        // Fallback: use raw fetch against Supabase Auth API
+        try {
+          const token = getAccessToken();
+          const resp = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+            method: 'PUT',
+            headers: {
+              'apikey': SUPABASE_KEY,
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ password }),
+          });
+          if (resp.ok) {
+            window.location.href = window.location.pathname;
+          } else {
+            const data = await resp.json().catch(() => ({}));
+            errEl.textContent = data.msg || data.error_description || 'Failed to update password';
+            errEl.classList.add('visible');
+            setAuthMode('newpassword');
+          }
+        } catch (fetchErr) {
+          errEl.textContent = 'Network error. Please try again.';
+          errEl.classList.add('visible');
+          setAuthMode('newpassword');
+        }
+      } else {
+        errEl.textContent = err.message || 'Something went wrong. Please try again.';
+        errEl.classList.add('visible');
+        setAuthMode('newpassword');
+      }
     }
     return;
   }

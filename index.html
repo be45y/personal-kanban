@@ -802,6 +802,9 @@
       <input type="password" id="auth-password" placeholder="••••••••" autocomplete="current-password" />
     </div>
     <button class="btn btn-primary" id="auth-submit-btn" style="width:100%;padding:10px;font-size:.9rem;margin-top:4px">Sign In</button>
+    <div id="forgot-link" style="text-align:center;margin-top:8px">
+      <a id="auth-forgot-link" style="font-size:.82rem;color:var(--accent);cursor:pointer">Forgot password?</a>
+    </div>
     <div class="auth-switch">
       <span id="auth-switch-text">Don't have an account?</span>
       <a id="auth-switch-link">Sign Up</a>
@@ -1892,31 +1895,58 @@ function showAuth() {
 }
 
 /* ─────────────────────────── Auth UI ───────────────────────── */
-let authMode = 'signin'; // 'signin' | 'signup'
+let authMode = 'signin'; // 'signin' | 'signup' | 'reset' | 'newpassword'
 
 function setAuthMode(mode) {
   authMode = mode;
   document.getElementById('auth-error').classList.remove('visible');
+  const pwField = document.getElementById('auth-password');
+  const pwGroup = pwField.closest('.form-group');
+  const forgotLink = document.getElementById('forgot-link');
+
+  // Show/hide password field & forgot link based on mode
+  pwGroup.style.display = mode === 'reset' ? 'none' : '';
+  forgotLink.style.display = (mode === 'signin') ? '' : 'none';
+
   if (mode === 'signup') {
     document.getElementById('auth-title').textContent    = 'Create an account';
     document.getElementById('auth-subtitle').textContent = 'Sign up to sync your board across all your devices.';
     document.getElementById('auth-submit-btn').textContent = 'Sign Up';
     document.getElementById('auth-switch-text').textContent = 'Already have an account?';
     document.getElementById('auth-switch-link').textContent = 'Sign In';
-    document.getElementById('auth-password').autocomplete = 'new-password';
+    pwField.autocomplete = 'new-password';
+  } else if (mode === 'reset') {
+    document.getElementById('auth-title').textContent    = 'Reset password';
+    document.getElementById('auth-subtitle').textContent = 'Enter your email and we\'ll send you a reset link.';
+    document.getElementById('auth-submit-btn').textContent = 'Send Reset Link';
+    document.getElementById('auth-switch-text').textContent = 'Remember your password?';
+    document.getElementById('auth-switch-link').textContent = 'Sign In';
+  } else if (mode === 'newpassword') {
+    document.getElementById('auth-title').textContent    = 'Set new password';
+    document.getElementById('auth-subtitle').textContent = 'Enter your new password below.';
+    document.getElementById('auth-submit-btn').textContent = 'Update Password';
+    document.getElementById('auth-switch-text').textContent = '';
+    document.getElementById('auth-switch-link').textContent = '';
+    document.getElementById('auth-email').closest('.form-group').style.display = 'none';
+    pwField.autocomplete = 'new-password';
+    pwField.placeholder = 'New password';
   } else {
     document.getElementById('auth-title').textContent    = 'Welcome back';
     document.getElementById('auth-subtitle').textContent = 'Sign in to sync your board across all your devices.';
     document.getElementById('auth-submit-btn').textContent = 'Sign In';
     document.getElementById('auth-switch-text').textContent = "Don't have an account?";
     document.getElementById('auth-switch-link').textContent = 'Sign Up';
-    document.getElementById('auth-password').autocomplete = 'current-password';
+    document.getElementById('auth-email').closest('.form-group').style.display = '';
+    pwField.autocomplete = 'current-password';
+    pwField.placeholder = '••••••••';
   }
 }
 
-document.getElementById('auth-switch-link').addEventListener('click', () =>
-  setAuthMode(authMode === 'signin' ? 'signup' : 'signin')
-);
+document.getElementById('auth-switch-link').addEventListener('click', () => {
+  if (authMode === 'reset') setAuthMode('signin');
+  else setAuthMode(authMode === 'signin' ? 'signup' : 'signin');
+});
+document.getElementById('auth-forgot-link').addEventListener('click', () => setAuthMode('reset'));
 
 async function handleAuthSubmit() {
   const email    = document.getElementById('auth-email').value.trim();
@@ -1924,14 +1954,53 @@ async function handleAuthSubmit() {
   const errEl    = document.getElementById('auth-error');
   const btn      = document.getElementById('auth-submit-btn');
 
-  if (!email || !password) {
-    errEl.textContent = 'Please enter your email and password.';
-    errEl.classList.add('visible'); return;
+  // Validate inputs based on mode
+  if (authMode === 'reset') {
+    if (!email) { errEl.textContent = 'Please enter your email.'; errEl.classList.add('visible'); return; }
+  } else if (authMode === 'newpassword') {
+    if (!password || password.length < 6) { errEl.textContent = 'Password must be at least 6 characters.'; errEl.classList.add('visible'); return; }
+  } else {
+    if (!email || !password) { errEl.textContent = 'Please enter your email and password.'; errEl.classList.add('visible'); return; }
   }
 
   btn.disabled = true;
-  btn.textContent = authMode === 'signin' ? 'Signing in…' : 'Creating account…';
   errEl.classList.remove('visible');
+
+  if (authMode === 'reset') {
+    btn.textContent = 'Sending…';
+    const { error } = await _sb.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin + window.location.pathname,
+    });
+    btn.disabled = false;
+    setAuthMode('reset');
+    if (error) {
+      errEl.textContent = error.message;
+      errEl.classList.add('visible');
+    } else {
+      errEl.textContent = '✓ Reset link sent! Check your email inbox.';
+      errEl.style.color = '#10b981';
+      errEl.classList.add('visible');
+      setTimeout(() => { errEl.style.color = ''; }, 8000);
+    }
+    return;
+  }
+
+  if (authMode === 'newpassword') {
+    btn.textContent = 'Updating…';
+    const { error } = await _sb.auth.updateUser({ password });
+    btn.disabled = false;
+    if (error) {
+      errEl.textContent = error.message;
+      errEl.classList.add('visible');
+      setAuthMode('newpassword');
+    } else {
+      // Password updated — reload to enter the app normally
+      window.location.reload();
+    }
+    return;
+  }
+
+  btn.textContent = authMode === 'signin' ? 'Signing in…' : 'Creating account…';
 
   let error;
   if (authMode === 'signin') {
@@ -2024,6 +2093,16 @@ async function initApp() {
   // Skip INITIAL_SESSION here since Step 1 already handled it.
   _sb.auth.onAuthStateChange(async (event, session) => {
     if (event === 'INITIAL_SESSION') return;
+
+    // ── Password recovery: show "set new password" screen
+    if (event === 'PASSWORD_RECOVERY') {
+      document.getElementById('loading-screen').classList.add('hidden');
+      document.getElementById('app').style.display = 'none';
+      document.getElementById('auth-screen').classList.remove('hidden');
+      setAuthMode('newpassword');
+      return;
+    }
+
     try {
       if (session?.user) {
         currentUser = session.user;

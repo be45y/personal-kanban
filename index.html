@@ -1195,6 +1195,12 @@ function addHistoryEntry(card, fromCol, toCol) {
   card.history.push({ from: fromCol, to: toCol, at: new Date().toISOString() });
 }
 
+function todayStr() {
+  const d = new Date();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
 function formatDate(str) {
   if (!str) return null;
   const d = new Date(str + 'T00:00:00');
@@ -1505,8 +1511,8 @@ function openCardModal(card, colId) {
   document.getElementById('modal-title').textContent = card ? 'Edit Card' : 'New Card';
   document.getElementById('card-title-input').value = card?.title || '';
   document.getElementById('card-desc-input').innerHTML = card?.desc || '';
-  document.getElementById('card-priority-select').value = card?.priority || '';
-  document.getElementById('card-due-input').value = card?.due || '';
+  document.getElementById('card-priority-select').value = card ? (card.priority || '') : 'high';
+  document.getElementById('card-due-input').value = card ? (card.due || '') : todayStr();
 
   populateColSelect(card?.col || defaultColId);
   renderProjectChips(card?.project || null);

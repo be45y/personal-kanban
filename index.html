@@ -985,6 +985,16 @@
 const SUPABASE_URL = 'https://tgofzytwbschhcdyvjad.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_wXRs7bhhdYZDuQn4Lj7umw_eAE5lbP9';
 
+// Read the reset-link details from the URL *before* creating the client.
+// supabase-js consumes the URL hash and fires PASSWORD_RECOVERY while it
+// initialises, which is before initApp() registers its listener — so the
+// event alone is missed and the reset link would just sign the user in.
+const _authUrlParams = new URLSearchParams(
+  window.location.hash.replace(/^#/, '') + '&' + window.location.search.replace(/^\?/, '')
+);
+const IS_PASSWORD_RECOVERY = _authUrlParams.get('type') === 'recovery';
+const AUTH_LINK_ERROR = _authUrlParams.get('error_description') || null;
+
 const _sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 let currentUser = null;
 let saveTimer    = null;
@@ -2092,6 +2102,13 @@ document.getElementById('import-confirm-btn').addEventListener('click', async ()
 document.getElementById('import-dismiss-btn').addEventListener('click', hideImportBanner);
 
 /* ─────────────────────────── Init ─────────────────────────── */
+function showNewPasswordScreen() {
+  document.getElementById('loading-screen').classList.add('hidden');
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('auth-screen').classList.remove('hidden');
+  setAuthMode('newpassword');
+}
+
 async function initApp() {
   // Validate config
   if (SUPABASE_URL === 'YOUR_SUPABASE_URL' || SUPABASE_KEY === 'YOUR_SUPABASE_ANON_KEY') {
@@ -2113,7 +2130,20 @@ async function initApp() {
   // that onAuthStateChange can miss in some browsers.
   try {
     const { data: { session } } = await _sb.auth.getSession();
-    if (session?.user) {
+    if (IS_PASSWORD_RECOVERY && session?.user) {
+      // Arrived from a reset-password email: ask for the new password
+      // instead of opening the board.
+      currentUser = session.user;
+      showNewPasswordScreen();
+    } else if (AUTH_LINK_ERROR) {
+      // e.g. expired or already-used reset link
+      showAuth();
+      setAuthMode('reset');
+      const errEl = document.getElementById('auth-error');
+      errEl.textContent = AUTH_LINK_ERROR.replace(/\+/g, ' ') + ' — request a new reset link below.';
+      errEl.classList.add('visible');
+      history.replaceState(null, '', window.location.pathname);
+    } else if (session?.user) {
       currentUser = session.user;
       const { state: loaded } = await loadStateFromDB();
       state = loaded;
@@ -2139,12 +2169,12 @@ async function initApp() {
 
     // ── Password recovery: show "set new password" screen
     if (event === 'PASSWORD_RECOVERY') {
-      document.getElementById('loading-screen').classList.add('hidden');
-      document.getElementById('app').style.display = 'none';
-      document.getElementById('auth-screen').classList.remove('hidden');
-      setAuthMode('newpassword');
+      showNewPasswordScreen();
       return;
     }
+    // While the user is choosing a new password, don't let background
+    // session events (token refresh etc.) swap the board in over the form.
+    if (authMode === 'newpassword' && session?.user) return;
 
     try {
       if (session?.user) {

@@ -2003,52 +2003,65 @@ async function handleAuthSubmit() {
 
   if (authMode === 'newpassword') {
     btn.textContent = 'Updating…';
+    // Note: setAuthMode() clears the error box, so always restore the mode
+    // *before* showing a message (previously errors were hidden instantly,
+    // which made the button look like it did nothing).
+    const fail = (msg) => {
+      btn.disabled = false;
+      setAuthMode('newpassword');
+      errEl.style.color = '';
+      errEl.textContent = msg;
+      errEl.classList.add('visible');
+    };
+    const succeed = () => {
+      setAuthMode('newpassword');
+      btn.disabled = true;
+      btn.textContent = 'Password updated ✓';
+      errEl.textContent = '✓ Password updated. Opening your board…';
+      errEl.style.color = '#10b981';
+      errEl.classList.add('visible');
+      setTimeout(() => window.location.replace(window.location.pathname), 1200);
+    };
+
+    // 1) Normal path via supabase-js (with a timeout, since it can hang).
+    let result = null;
     try {
-      const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 15000));
-      const update = _sb.auth.updateUser({ password });
-      const { error } = await Promise.race([update, timeout]);
-      btn.disabled = false;
-      if (error) {
-        errEl.textContent = error.message;
-        errEl.classList.add('visible');
-        setAuthMode('newpassword');
-      } else {
-        // Password updated — reload to enter the app normally
-        window.location.href = window.location.pathname; // clear hash fragment
-      }
+      const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000));
+      result = await Promise.race([_sb.auth.updateUser({ password }), timeout]);
     } catch (err) {
-      btn.disabled = false;
-      if (err.message === 'timeout') {
-        // Fallback: use raw fetch against Supabase Auth API
-        try {
-          const token = getAccessToken();
-          const resp = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-            method: 'PUT',
-            headers: {
-              'apikey': SUPABASE_KEY,
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ password }),
-          });
-          if (resp.ok) {
-            window.location.href = window.location.pathname;
-          } else {
-            const data = await resp.json().catch(() => ({}));
-            errEl.textContent = data.msg || data.error_description || 'Failed to update password';
-            errEl.classList.add('visible');
-            setAuthMode('newpassword');
-          }
-        } catch (fetchErr) {
-          errEl.textContent = 'Network error. Please try again.';
-          errEl.classList.add('visible');
-          setAuthMode('newpassword');
-        }
-      } else {
-        errEl.textContent = err.message || 'Something went wrong. Please try again.';
-        errEl.classList.add('visible');
-        setAuthMode('newpassword');
-      }
+      if (err.message !== 'timeout') { fail(err.message || 'Something went wrong. Please try again.'); return; }
+    }
+    if (result) {
+      if (result.error) fail(result.error.message);
+      else succeed();
+      return;
+    }
+
+    // 2) Fallback: raw fetch against the Supabase Auth API.
+    const token = getAccessToken();
+    if (!token) { fail('Your reset link has expired. Please request a new one.'); return; }
+    const ctrl = new AbortController();
+    const abortTimer = setTimeout(() => ctrl.abort(), 15000);
+    try {
+      const resp = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+        method: 'PUT',
+        headers: {
+          'apikey': SUPABASE_KEY,
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ password }),
+        signal: ctrl.signal,
+      });
+      if (resp.ok) { succeed(); return; }
+      const data = await resp.json().catch(() => ({}));
+      fail(data.msg || data.message || data.error_description || `Failed to update password (${resp.status}).`);
+    } catch (fetchErr) {
+      fail(fetchErr.name === 'AbortError'
+        ? 'The server took too long to respond. Please try again.'
+        : 'Network error. Please try again.');
+    } finally {
+      clearTimeout(abortTimer);
     }
     return;
   }
